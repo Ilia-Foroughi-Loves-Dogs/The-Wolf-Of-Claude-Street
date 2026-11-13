@@ -1,14 +1,14 @@
 "use client";
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, CircleHelp, Coffee, Download, Home as HomeIcon, LineChart, LoaderCircle, LogOut, MessageCircleQuestion, PiggyBank, Plus, Repeat, RotateCcw, Search, Settings as SettingsIcon, ShieldCheck, ShoppingBag, ShoppingCart, Target, Trophy, X, type LucideIcon } from 'lucide-react';
+import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, CircleHelp, Coffee, Download, Home as HomeIcon, LineChart, LoaderCircle, MessageCircleQuestion, PiggyBank, Plus, Repeat, RotateCcw, Search, Settings as SettingsIcon, ShieldCheck, ShoppingBag, ShoppingCart, Target, Trophy, X, type LucideIcon } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import { Card, Empty, PageTitle, WolfMark, initials, signedMoney, signedPercent } from './ui/kit';
 import { ActivityChart } from './charts';
 import { Ask } from './ask';
 import { Invest } from './invest';
-import { useAccount } from './account-provider';
+import { useProfile } from './account-provider';
 import { useMarkets } from './market-provider';
 import { usePortfolio } from './portfolio-provider';
 import { SportsSimulator } from './sports-simulator';
@@ -29,7 +29,7 @@ const CATEGORIES = ['Food & drink', 'Groceries', 'Transport', 'Shopping', 'Other
 const shortDate = (at: string) => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
 export function Application({ view }: { view: string }) {
-  const { account, logOut } = useAccount();
+  const { name } = useProfile();
   const { state, ready, storageError, mutate, activeScenario, setActiveScenario } = usePortfolio();
   const [purchaseOpen, setPurchaseOpen] = useState(false), [helpOpen, setHelpOpen] = useState(false), [reviewOpen, setReviewOpen] = useState(false), [reset, setReset] = useState<'demo' | 'empty' | null>(null), [notice, setNotice] = useState('');
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 6000); return () => clearTimeout(timer); }, [notice]);
@@ -41,16 +41,12 @@ export function Application({ view }: { view: string }) {
       <Link href="/" className="logo"><span className="logo-mark"><WolfMark size={20} /></span>Wolf of Claude Street</Link>
       <nav aria-label="Main">{NAV.map(({ key, label, icon: Icon, path }) => <Link key={key} href={path} className={`side-link ${view === key ? 'active' : ''}`} aria-current={view === key ? 'page' : undefined}><Icon size={19} strokeWidth={1.8} />{label}</Link>)}</nav>
       <button type="button" className="side-link side-help" onClick={() => setHelpOpen(true)}><CircleHelp size={19} strokeWidth={1.8} />How it works</button>
-      <div className="side-user">
-        <span className="avatar">{initials(account.name)}</span>
-        <span className="side-user-text"><strong>{account.name}</strong><small>{account.email}</small></span>
-        <button type="button" className="icon-btn" onClick={logOut} aria-label="Log out" title="Log out"><LogOut size={17} /></button>
-      </div>
+      {name && <Link href="/settings" className="side-user"><span className="avatar">{initials(name)}</span><span className="side-user-text"><strong>{name}</strong><small>Settings</small></span></Link>}
     </aside>
 
     <header className="mobile-top">
       <Link href="/" className="logo"><span className="logo-mark"><WolfMark size={18} /></span>Wolf of Claude Street</Link>
-      <div><Link href="/advisor" className="icon-btn" aria-label="Ask a question"><MessageCircleQuestion size={20} /></Link><Link href="/settings" className="avatar avatar-sm" aria-label="Account settings">{initials(account.name)}</Link></div>
+      <div><Link href="/advisor" className="icon-btn" aria-label="Ask a question"><MessageCircleQuestion size={20} /></Link><Link href="/settings" className="icon-btn" aria-label="Settings"><SettingsIcon size={20} /></Link></div>
     </header>
 
     <main className="content">
@@ -73,7 +69,7 @@ export function Application({ view }: { view: string }) {
     <Dialog open={reviewOpen} onOpenChange={setReviewOpen}><DialogContent><DialogTitle>Your weekly Sports Lab check-in</DialogTitle><DialogDescription>A summary of the last seven days.</DialogDescription>{state.reviews[0] && <ReviewReport state={state} />}<Button className="full-width" variant="outline" onClick={() => setReviewOpen(false)}>Done</Button></DialogContent></Dialog>
     <Dialog open={reset !== null} onOpenChange={open => !open && setReset(null)}><DialogContent>
       <DialogTitle>{reset === 'demo' ? 'Load sample data?' : 'Start over?'}</DialogTitle>
-      <DialogDescription>{reset === 'demo' ? 'This replaces everything in your account with a month of example purchases and investments.' : 'This deletes all purchases, investments and settings in your account. Your login stays.'}</DialogDescription>
+      <DialogDescription>{reset === 'demo' ? 'This replaces everything with a month of example purchases and investments.' : 'This deletes all purchases, investments and settings.'}</DialogDescription>
       <div className="dialog-buttons"><Button variant="outline" onClick={() => setReset(null)}>Cancel</Button><Button className={reset === 'empty' ? 'btn-danger' : ''} onClick={async () => { try { await mutate(() => reset === 'demo' ? demoPortfolio() : emptyPortfolio(), { replace: true }); notify(reset === 'demo' ? 'Sample data loaded.' : 'Your account has been cleared.'); setReset(null); } catch (e) { notify((e as Error).message); } }}>{reset === 'demo' ? 'Load sample data' : 'Delete everything'}</Button></div>
     </DialogContent></Dialog>
     {notice && <div className="toast" role="status"><Check size={17} /><p>{notice}</p><button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
@@ -81,7 +77,7 @@ export function Application({ view }: { view: string }) {
 }
 
 function Home({ state, mutate, notify, onPurchase, onHelp }: { state: Portfolio; mutate: Mutate; notify: Notify; onPurchase: () => void; onHelp: () => void }) {
-  const { account } = useAccount(), { prices } = useMarkets();
+  const { name } = useProfile(), { prices } = useMarkets();
   const b = balances(state), pv = portfolioValue(state, prices), total = b.savings + pv.valueCents + b.risk;
   const [days, setDays] = useState(30), [goalOpen, setGoalOpen] = useState(false);
   const hour = new Date().getHours(), greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
@@ -90,7 +86,7 @@ function Home({ state, mutate, notify, onPurchase, onHelp }: { state: Portfolio;
   const parts = [{ key: 'savings', label: 'Savings', value: b.savings }, { key: 'invested', label: 'Investments', value: pv.valueCents }, { key: 'sports', label: 'Sports Lab', value: b.risk }];
   const rule = state.autoInvest;
   return <>
-    <PageTitle title={`${greeting}, ${account.name.split(' ')[0]}`} />
+    <PageTitle title={name ? `${greeting}, ${name.split(' ')[0]}` : greeting} />
     <section className="card hero">
       <div className="hero-top">
         <div><span className="label">Total balance</span><strong className="hero-amount">{money(total)}</strong>
@@ -235,22 +231,19 @@ function HowItWorks({ onStart }: { onStart: () => void }) {
 }
 
 function Settings({ state, mutate, notify, onReset }: { state: Portfolio; mutate: Mutate; notify: Notify; onReset: (kind: 'demo' | 'empty') => void }) {
-  const { account, rename, logOut, remove } = useAccount();
-  const [name, setName] = useState(account.name), [split, setSplit] = useState(state.allocation), [limits, setLimits] = useState<Limits>(state.limits), [error, setError] = useState(''), [deleteOpen, setDeleteOpen] = useState(false);
+  const { name: savedName, rename } = useProfile();
+  const [name, setName] = useState(savedName), [split, setSplit] = useState(state.allocation), [limits, setLimits] = useState<Limits>(state.limits), [error, setError] = useState('');
   const sportsCents = Math.floor(65 * split / 100);
   async function saveSplit() { try { await mutate(s => updateAllocation(s, Math.min(split, s.limits.allocation))); notify('Saved.'); } catch (e) { notify((e as Error).message); } }
   async function saveLimits(e: React.FormEvent) { e.preventDefault(); setError(''); try { await mutate(s => updateAllocation(updateLimits(s, limits), Math.min(s.allocation, limits.allocation))); setSplit(Math.min(split, limits.allocation)); notify('Sports Lab limits saved.'); } catch (err) { setError((err as Error).message); } }
   return <>
     <PageTitle title="Settings" />
     <div className="settings">
-      <Card title="Your account">
-        <div className="account-row"><span className="avatar avatar-lg">{initials(account.name)}</span><div><strong>{account.name}</strong><small>{account.email}</small><small>Member since {new Date(account.createdAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</small></div></div>
-        <form className="inline-form" onSubmit={e => { e.preventDefault(); try { rename(name); notify('Name updated.'); } catch (err) { notify((err as Error).message); } }}>
-          <label className="field">Name<input value={name} onChange={e => setName(e.target.value)} maxLength={60} /></label>
-          <Button type="submit" variant="outline" disabled={!name.trim() || name.trim() === account.name}>Save</Button>
+      <Card title="Your name">
+        <form className="inline-form" onSubmit={e => { e.preventDefault(); try { rename(name); notify('Name saved.'); } catch (err) { notify((err as Error).message); } }}>
+          <label className="field">Shown in your greeting (optional)<input value={name} onChange={e => setName(e.target.value)} maxLength={60} placeholder="Alex" /></label>
+          <Button type="submit" variant="outline" disabled={name.trim() === savedName}>Save</Button>
         </form>
-        <div className="button-row"><Button variant="outline" onClick={logOut}><LogOut size={15} />Log out</Button><button type="button" className="link-btn danger" onClick={() => setDeleteOpen(true)}>Delete account</button></div>
-        <p className="muted small">Your account is saved in this browser on this device only.</p>
       </Card>
 
       <Card title="Where your spare change goes">
@@ -279,11 +272,6 @@ function Settings({ state, mutate, notify, onReset }: { state: Portfolio; mutate
         <p className="muted small"><ShieldCheck size={14} />Your savings and investments can never be used in Sports Lab.</p>
       </Card>
     </div>
-    <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}><DialogContent>
-      <DialogTitle>Delete your account?</DialogTitle>
-      <DialogDescription>This permanently removes your login and all of your data from this device. It can’t be undone.</DialogDescription>
-      <div className="dialog-buttons"><Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button><Button className="btn-danger" onClick={remove}>Delete account</Button></div>
-    </DialogContent></Dialog>
   </>;
 }
 

@@ -1,50 +1,35 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { SESSION_KEY, createAccount, deleteAccount, portfolioKey, publicAccount, readAccounts, renameAccount, verifyLogin, type PublicAccount } from '@/lib/accounts';
-import { STORAGE_KEY, demoPortfolio, emptyPortfolio, loadPortfolio } from '@/lib/engine';
+import { SESSION_KEY, portfolioKey, readAccounts } from '@/lib/accounts';
+import { STORAGE_KEY, demoPortfolio } from '@/lib/engine';
 import { MarketProvider } from './market-provider';
 import { PortfolioProvider } from './portfolio-provider';
-import { AuthScreen } from './auth-screen';
 
-export type StartWith = 'sample' | 'blank' | 'existing';
-type Context = { account: PublicAccount; logOut: () => void; rename: (name: string) => void; remove: () => void };
-const AccountContext = createContext<Context | null>(null);
-
-export type AuthActions = { signUp: (input: { name: string; email: string; password: string; startWith: StartWith }) => Promise<void>; logIn: (email: string, password: string) => Promise<void>; hasDeviceData: boolean };
+// No sign-up: everyone uses the app directly. A display name is optional.
+// Data created under an earlier device-local account is still used if present.
+const PROFILE_KEY = 'wocs-profile-v1';
+type Context = { name: string; rename: (name: string) => void };
+const ProfileContext = createContext<Context | null>(null);
 
 export function AccountProvider({ children }: { children: React.ReactNode }) {
-  const [account, setAccount] = useState<PublicAccount | null>(null), [ready, setReady] = useState(false), [hasDeviceData, setHasDeviceData] = useState(false);
+  const [storageKey, setStorageKey] = useState<string | null>(null), [name, setName] = useState('');
   useEffect(() => {
+    let key = STORAGE_KEY, initialName = '';
     try {
-      const id = localStorage.getItem(SESSION_KEY), found = readAccounts().find(a => a.id === id);
-      setAccount(found ? publicAccount(found) : null);
-      setHasDeviceData(!!localStorage.getItem(STORAGE_KEY));
-    } catch { /* storage unavailable: show the sign-up screen */ }
-    setReady(true);
+      const accounts = readAccounts(), previous = accounts.find(a => a.id === localStorage.getItem(SESSION_KEY)) ?? accounts[0];
+      if (previous && localStorage.getItem(portfolioKey(previous.id))) { key = portfolioKey(previous.id); initialName = previous.name; }
+      initialName = localStorage.getItem(PROFILE_KEY) ?? initialName;
+      if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(demoPortfolio()));
+    } catch { /* storage unavailable: the portfolio provider reports it */ }
+    setName(initialName); setStorageKey(key);
   }, []);
-
-  const signUp = useCallback<AuthActions['signUp']>(async ({ startWith, ...input }) => {
-    const created = await createAccount(input);
-    let initial = startWith === 'sample' ? demoPortfolio() : emptyPortfolio();
-    if (startWith === 'existing') { try { initial = loadPortfolio(localStorage.getItem(STORAGE_KEY) ?? ''); } catch { initial = emptyPortfolio(); } }
-    localStorage.setItem(portfolioKey(created.id), JSON.stringify(initial));
-    if (startWith === 'existing') localStorage.removeItem(STORAGE_KEY);
-    localStorage.setItem(SESSION_KEY, created.id);
-    setAccount(publicAccount(created));
+  const rename = useCallback((next: string) => {
+    if (next.trim().length > 60) throw new Error('Use a name under 60 characters.');
+    localStorage.setItem(PROFILE_KEY, next.trim()); setName(next.trim());
   }, []);
-  const logIn = useCallback<AuthActions['logIn']>(async (email, password) => {
-    const found = await verifyLogin(email, password);
-    localStorage.setItem(SESSION_KEY, found.id);
-    setAccount(publicAccount(found));
-  }, []);
-  const logOut = useCallback(() => { localStorage.removeItem(SESSION_KEY); setAccount(null); setHasDeviceData(!!localStorage.getItem(STORAGE_KEY)); }, []);
-  const rename = useCallback((name: string) => { if (!account) return; renameAccount(account.id, name); setAccount({ ...account, name: name.trim() }); }, [account]);
-  const remove = useCallback(() => { if (!account) return; deleteAccount(account.id); setAccount(null); }, [account]);
-
-  if (!ready) return <div className="boot" aria-busy="true" />;
-  if (!account) return <AuthScreen signUp={signUp} logIn={logIn} hasDeviceData={hasDeviceData} />;
-  return <AccountContext.Provider value={{ account, logOut, rename, remove }}>
-    <PortfolioProvider key={account.id} storageKey={portfolioKey(account.id)}><MarketProvider>{children}</MarketProvider></PortfolioProvider>
-  </AccountContext.Provider>;
+  if (!storageKey) return <div className="boot" aria-busy="true" />;
+  return <ProfileContext.Provider value={{ name, rename }}>
+    <PortfolioProvider storageKey={storageKey}><MarketProvider>{children}</MarketProvider></PortfolioProvider>
+  </ProfileContext.Provider>;
 }
-export function useAccount() { const value = useContext(AccountContext); if (!value) throw new Error('Missing account provider'); return value; }
+export function useProfile() { const value = useContext(ProfileContext); if (!value) throw new Error('Missing profile provider'); return value; }
