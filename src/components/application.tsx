@@ -37,16 +37,15 @@ export function Application({ view }: { view: string }) {
   async function review() { try { await mutate(s => saveReview(s)); setReviewOpen(true); } catch (e) { notify((e as Error).message); } }
 
   return <div className="app">
-    <aside className="side">
+    <header className="topnav">
       <Link href="/" className="logo"><span className="logo-mark"><WolfMark size={20} /></span>Wolf of Claude Street</Link>
-      <nav aria-label="Main">{NAV.map(({ key, label, icon: Icon, path }) => <Link key={key} href={path} className={`side-link ${view === key ? 'active' : ''}`} aria-current={view === key ? 'page' : undefined}><Icon size={19} strokeWidth={1.8} />{label}</Link>)}</nav>
-      <button type="button" className="side-link side-help" onClick={() => setHelpOpen(true)}><CircleHelp size={19} strokeWidth={1.8} />How it works</button>
-      {name && <Link href="/settings" className="side-user"><span className="avatar">{initials(name)}</span><span className="side-user-text"><strong>{name}</strong><small>Settings</small></span></Link>}
-    </aside>
-
-    <header className="mobile-top">
-      <Link href="/" className="logo"><span className="logo-mark"><WolfMark size={18} /></span>Wolf of Claude Street</Link>
-      <div><Link href="/advisor" className="icon-btn" aria-label="Ask a question"><MessageCircleQuestion size={20} /></Link><Link href="/settings" className="icon-btn" aria-label="Settings"><SettingsIcon size={20} /></Link></div>
+      <nav className="topnav-links" aria-label="Main">{NAV.filter(n => n.key !== 'settings').map(({ key, label, path }) => <Link key={key} href={path} className={view === key ? 'active' : ''} aria-current={view === key ? 'page' : undefined}>{label === 'Ask a question' ? 'Ask' : label}</Link>)}</nav>
+      <div className="topnav-right">
+        <button type="button" className="icon-btn topnav-desktop" onClick={() => setHelpOpen(true)} aria-label="How it works" title="How it works"><CircleHelp size={20} /></button>
+        <Link href="/advisor" className="icon-btn topnav-mobile" aria-label="Ask a question"><MessageCircleQuestion size={20} /></Link>
+        <Link href="/settings" className={`icon-btn ${view === 'settings' ? 'active' : ''}`} aria-label="Settings" title="Settings">{name ? <span className="avatar avatar-sm">{initials(name)}</span> : <SettingsIcon size={20} />}</Link>
+        <button type="button" className="pill-btn topnav-desktop" onClick={() => setPurchaseOpen(true)}>Add a purchase</button>
+      </div>
     </header>
 
     <main className="content">
