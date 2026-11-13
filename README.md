@@ -1,4 +1,4 @@
-# RoundUp AI
+# Wolf of Claude Street
 
 A working, savings-first fintech prototype. Simulated purchase round-ups build protected savings while a separate virtual budget lets you explore probability, expected value, and risk limits. All funds, sports events, and outcomes are illustrative. No actual wagering, investment execution, or bank connections.
 
