@@ -8,7 +8,16 @@ const cents = z.number().int().min(0).max(100_000_000);
 const limitsSchema = z.object({ allocation: z.number().int().min(0).max(20), exposure: z.number().min(0.1).max(5), dailyLoss: z.number().min(0.1).max(10) });
 export type Limits = z.infer<typeof limitsSchema>;
 const purchaseSchema = z.object({ kind:z.literal('purchase'), id:z.string(), at:timestamp, merchant:z.string().min(1).max(80), category:z.string().max(40), amountCents:cents.min(1).max(1_000_000), roundupCents:cents.max(99), savingsCents:cents, riskCents:cents, allocation:z.number().min(0).max(20) });
-const scenarioSchema = z.object({ event:z.string().trim().min(1).max(120), probability:z.number().gt(0).lt(1), multiplier:z.number().min(1.01).max(100), stakeCents:cents.min(1), combined:z.boolean(), secondProbability:z.number().gt(0).lt(1), independent:z.boolean() });
+export const PROBABILITY_OPTIONS = [10,20,30,40,50,60,70,80,90] as const;
+const chosenProbability = z.number().refine(p => PROBABILITY_OPTIONS.some(option => p===option/100), 'Choose 10%–90% in steps of 10%.');
+export const scenarioLegSchema = z.object({
+  eventId:z.string().max(100), event:z.string().min(1).max(200), teamId:z.string().max(50), team:z.string().min(1).max(100),
+  league:z.string().max(100), startsAt:timestamp, status:z.string().max(40), source:z.literal('ESPN public scoreboard'),
+  probability:chosenProbability, multiplier:z.number().min(1.01).max(100),
+});
+// Historical records retain their original assumptions. New executions are
+// checked below, so portfolios saved before the upgrade remain readable.
+export const scenarioSchema = z.object({ event:z.string().trim().min(1).max(240), probability:z.number().gt(0).lt(1), multiplier:z.number().min(1.01).max(1_000_000), stakeCents:cents.min(1), combined:z.boolean(), secondProbability:z.number().gt(0).lt(1), independent:z.boolean(), legs:z.array(scenarioLegSchema).min(1).max(8).optional(), combinedProbability:chosenProbability.optional(), calculationVersion:z.literal(2).optional() });
 export type Scenario = z.infer<typeof scenarioSchema>;
 const outcomeSchema = z.object({ kind:z.literal('outcome'), id:z.string(), at:timestamp, scenario:scenarioSchema, won:z.boolean(), payoutCents:cents, netCents:z.number().int(), limits:limitsSchema, availableBefore:cents, dayStartCents:cents, lossBeforeCents:cents });
 const transferSchema = z.object({kind:z.literal('protect'), id:z.string(), at:timestamp, amountCents:cents.min(1), reason:z.string()});
@@ -60,10 +69,41 @@ export function updateLimits(state:Portfolio,limits:Limits,at=new Date().toISOSt
   if(excess>b.risk) throw new Error('The remaining virtual balance cannot cover this reduction yet. Choose a smaller reduction.');
   return {...state,limits,allocation:Math.min(state.allocation,limits.allocation),ledger:excess?[...state.ledger,{kind:'protect',id:id(),at,amountCents:excess,reason:'Stricter allocation limit: virtual funds moved into protected savings.'}]:state.ledger};
 }
-export function effectiveProbability(s:Scenario) {return s.combined ? (s.independent ? s.probability*s.secondProbability : null) : s.probability;}
+export function effectiveProbability(s:Scenario) {
+  if(s.legs?.length) return s.combined ? (s.independent ? s.legs.reduce((p,leg)=>p*leg.probability,1) : s.combinedProbability??null) : s.legs[0].probability;
+  return s.combined ? (s.independent ? s.probability*s.secondProbability : s.combinedProbability??null) : s.probability;
+}
+export function effectiveMultiplier(s:Scenario) {return s.legs?.length ? s.legs.reduce((n,leg)=>n*leg.multiplier,1) : s.multiplier;}
+function decimalProduct(factors:number[]) {
+  let numerator=1n,denominator=1n;
+  for(const factor of factors){
+    const [coefficient, exponent='0']=factor.toString().split('e');
+    const [whole,fraction='']=coefficient.split('.');
+    const power=fraction.length-Number(exponent);
+    numerator*=BigInt(whole+fraction);
+    if(power<=0)numerator*=10n**BigInt(-power);else denominator*=10n**BigInt(power);
+  }
+  return {numerator,denominator};
+}
+function roundedCents(numerator:bigint,denominator:bigint) {
+  const whole=numerator/denominator,remainder=numerator%denominator;
+  // Round to nearest cent, with half-cent ties toward positive infinity.
+  return Number(whole+(remainder*2n>=denominator?1n:remainder*2n < -denominator?-1n:0n));
+}
+export function payoutCents(stakeCents:number,multiplier:number|number[]) {
+  // Apply every exact decimal ratio before rounding once.
+  const {numerator,denominator}=decimalProduct(Array.isArray(multiplier)?multiplier:[multiplier]);
+  return roundedCents(BigInt(stakeCents)*numerator,denominator);
+}
+function expectedValueCents(s:Scenario,payout:number) {
+  const probabilities=s.combined?(s.independent?(s.legs?.map(leg=>leg.probability)??[s.probability,s.secondProbability]):[s.combinedProbability!]):[s.legs?.[0]?.probability??s.probability];
+  const {numerator,denominator}=decimalProduct(probabilities);
+  return roundedCents(numerator*BigInt(payout)-BigInt(s.stakeCents)*denominator,denominator);
+}
 export function scenarioMetrics(s:Scenario) {
-  const p=effectiveProbability(s),payout=Math.round(s.stakeCents*s.multiplier);
-  return {probability:p,implied:1/s.multiplier,payout,ev:p===null?null:p*payout-s.stakeCents,loss:s.stakeCents};
+  const p=effectiveProbability(s),multiplier=effectiveMultiplier(s);
+  const payout=Number.isFinite(multiplier)&&Number.isSafeInteger(s.stakeCents)&&s.stakeCents>=0?payoutCents(s.stakeCents,s.legs?.map(leg=>leg.multiplier)??multiplier):0;
+  return {probability:p,multiplier,implied:1/multiplier,payout,profit:payout-s.stakeCents,ev:p===null?null:expectedValueCents(s,payout),loss:s.stakeCents};
 }
 function dayKey(at:string){return at.slice(0,10);}
 export function riskStatus(state:Portfolio,at=new Date().toISOString()) {
@@ -76,8 +116,18 @@ export function riskStatus(state:Portfolio,at=new Date().toISOString()) {
 }
 export function scenarioError(state:Portfolio,scenario:Scenario,at=new Date().toISOString()):string|null {
   const parsed=scenarioSchema.safeParse(scenario);
-  if(!parsed.success) return 'Enter a named event, probabilities between 1–99%, a multiplier from 1.01–100, and at least $0.01.';
-  if(effectiveProbability(scenario)===null) return 'Combined predictions require an explicit independence assumption. Correlation can invalidate multiplication.';
+  if(!parsed.success) return 'Choose a game, probabilities from 10%–90% in steps of 10%, multipliers from 1.01–100 per game, and at least $0.01.';
+  if(!chosenProbability.safeParse(scenario.probability).success||!chosenProbability.safeParse(scenario.secondProbability).success) return 'Choose probabilities from 10%–90% in steps of exactly 10%.';
+  if(scenario.legs){
+    if(scenario.combined!==(scenario.legs.length>1)||new Set(scenario.legs.map(leg=>leg.eventId)).size!==scenario.legs.length) return 'Select different games for a combined scenario.';
+    if(scenario.probability!==scenario.legs[0].probability||Math.abs(scenario.multiplier-effectiveMultiplier(scenario))>1e-8) return 'Scenario totals must match the selected games.';
+    if(scenario.combined&&!scenario.independent&&scenario.combinedProbability!==undefined){
+      const lower=Math.max(0,scenario.legs.reduce((sum,leg)=>sum+leg.probability,0)-(scenario.legs.length-1));
+      if(scenario.combinedProbability>Math.min(...scenario.legs.map(leg=>leg.probability))+1e-10||scenario.combinedProbability<lower-1e-10) return 'The manual combined probability is inconsistent with the individual probabilities. Revise your assumptions.';
+    }
+  }
+  if(!Number.isFinite(effectiveMultiplier(scenario))||effectiveMultiplier(scenario)>1_000_000||scenarioMetrics(scenario).payout>100_000_000) return 'Reduce the amount or multipliers: the maximum modeled payout is $1,000,000 and combined multiplier is 1,000,000×.';
+  if(effectiveProbability(scenario)===null) return 'Combined predictions require an explicit independence assumption or a manually entered combined probability. Correlation can invalidate multiplication.';
   const b=balances(state),r=riskStatus(state,at);
   if(scenario.stakeCents>b.risk) return `Only ${money(b.risk)} is available. Protected savings cannot fund scenarios.`;
   if(scenario.stakeCents>r.exposure) return `Exposure limit: maximum ${money(r.exposure)} (${state.limits.exposure}% of your available virtual budget).`;
@@ -91,8 +141,8 @@ export function simulate(state:Portfolio,scenario:Scenario,random=()=>crypto.get
   if(error) return {state:{...opened,blocked:[...opened.blocked,{id:id(),at,reason:error,stakeCents:Number.isSafeInteger(scenario.stakeCents)&&scenario.stakeCents>=0?scenario.stakeCents:0}]},error};
   const draw=random();
   if(!Number.isFinite(draw)||draw<0||draw>=1) throw new Error('Invalid random sample.');
-  const won=draw<(effectiveProbability(scenario)??0),payoutCents=won?Math.round(scenario.stakeCents*scenario.multiplier):0;
-  const outcome:Outcome={kind:'outcome',id:id(),at,scenario:{...scenario},won,payoutCents,netCents:payoutCents-scenario.stakeCents,limits:{...state.limits},availableBefore:balances(state).risk,dayStartCents:r.start,lossBeforeCents:r.lost};
+  const won=draw<(effectiveProbability(scenario)??0),payout=won?scenarioMetrics(scenario).payout:0;
+  const outcome:Outcome={kind:'outcome',id:id(),at,scenario:{...scenario,calculationVersion:2},won,payoutCents:payout,netCents:payout-scenario.stakeCents,limits:{...state.limits},availableBefore:balances(state).risk,dayStartCents:r.start,lossBeforeCents:r.lost};
   return {state:{...opened,ledger:[...opened.ledger,outcome]},outcome};
 }
 export function generateReview(state:Portfolio,at=new Date().toISOString()):Review {
@@ -115,7 +165,7 @@ export function loadPortfolio(raw:string):Portfolio {
     seen.add(entry.id);
     if(entry.kind==='purchase'&&(roundUp(entry.amountCents)!==entry.roundupCents||entry.savingsCents+entry.riskCents!==entry.roundupCents||entry.riskCents>Math.floor(entry.roundupCents*entry.allocation/100))) throw new Error('Invalid purchase allocation.');
     if(entry.kind==='outcome'){
-      const expected=entry.won?Math.round(entry.scenario.stakeCents*entry.scenario.multiplier):0;
+      const expected=entry.won?(entry.scenario.calculationVersion===2||entry.scenario.legs?scenarioMetrics(entry.scenario).payout:Math.round(entry.scenario.stakeCents*entry.scenario.multiplier)):0;
       const b=balances(running);
       if(entry.netCents!==expected-entry.scenario.stakeCents||entry.payoutCents!==expected||entry.availableBefore!==b.risk||entry.scenario.stakeCents>b.risk||entry.scenario.stakeCents>Math.floor(b.risk*entry.limits.exposure/100)||entry.lossBeforeCents+entry.scenario.stakeCents>Math.floor(entry.dayStartCents*entry.limits.dailyLoss/100)||effectiveProbability(entry.scenario)===null) throw new Error('Invalid simulation ledger.');
     }
@@ -136,9 +186,9 @@ export function demoPortfolio(now=new Date()):Portfolio {
     const m=merchants[index%merchants.length];
     state=addPurchase(state,{id:`demo-purchase-${index}`,merchant:m[0],category:m[1],amount:m[2],at});
     if([16,22,28,34,40,46].includes(index)){
-      const names=['Harbor FC · Match outcome','Atlas United · Team total','North Stars · Match outcome'];
+      const names=['Historical demo A · illustrative outcome','Historical demo B · illustrative outcome','Historical demo C · illustrative outcome'];
       const r=riskStatus(state,at), stakeCents=Math.min(8,r.maxStake);
-      if(stakeCents>0) state=simulate(state,{event:names[Math.floor(index/6)%3],probability:0.58,multiplier:1.85,stakeCents,combined:false,secondProbability:0.5,independent:false},()=>Math.floor(index/6)%3===0?0.8:0.2,new Date(new Date(at).getTime()+1000).toISOString()).state;
+      if(stakeCents>0) state=simulate(state,{event:names[Math.floor(index/6)%3],probability:0.6,multiplier:1.85,stakeCents,combined:false,secondProbability:0.5,independent:false},()=>Math.floor(index/6)%3===0?0.8:0.2,new Date(new Date(at).getTime()+1000).toISOString()).state;
     }
   }
   state={...state,ledger:[...state.ledger].sort((a,b)=>a.at.localeCompare(b.at))};

@@ -12,6 +12,13 @@ test('advisor demo endpoint uses the submitted ledger and labels its source',asy
   const response=await POST(request({question:'How does my coffee round-up work?',portfolio}));
   assert.equal(response.status,200);const data=await response.json();assert.equal(data.mode,'demo');assert.match(data.answer,/\$0.52/);assert.match(data.answer,/\$0.13/);assert.match(data.answer,/\$0.65 in total/);
 });
+test('advisor endpoint retains selected sports legs, joint model and exact scenario calculations',async()=>{
+  const leg={eventId:'test-fixture',event:'Test scheduled game',teamId:'a',team:'Selected test team',league:'NBA',startsAt:'2026-11-13T20:00:00.000Z',status:'Upcoming',source:'ESPN public scoreboard',probability:.6,multiplier:2.5};
+  const scenario={event:'Test combined fixture',probability:.6,secondProbability:.5,multiplier:5,stakeCents:1,combined:true,independent:false,combinedProbability:.3,legs:[leg,{...leg,eventId:'second-fixture',probability:.5,multiplier:2}]};
+  const response=await POST(request({question:'Explain the selected scenario.',portfolio,scenario}));
+  assert.equal(response.status,200);const data=await response.json();assert.equal(data.mode,'demo');
+  assert.match(data.answer,/Selected test team/);assert.match(data.answer,/manually supplied/);assert.match(data.answer,/ESPN schedule snapshot/);assert.match(data.answer,/5.00×/);
+});
 test('advisor rejects malformed, oversized, and inconsistent portfolio requests',async()=>{
   assert.equal((await POST(request({question:'',portfolio}))).status,400);
   assert.equal((await POST(request({question:'hello',portfolio:{version:1}}))).status,400);

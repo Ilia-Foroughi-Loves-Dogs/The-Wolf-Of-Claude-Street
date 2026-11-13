@@ -1,10 +1,11 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { STORAGE_KEY, demoPortfolio, emptyPortfolio, loadPortfolio, type Portfolio } from '@/lib/engine';
-type Context={state:Portfolio;ready:boolean;storageError:string;mutate:(fn:(s:Portfolio)=>Portfolio,options?:{replace:boolean})=>Promise<void>};
+import { STORAGE_KEY, demoPortfolio, emptyPortfolio, loadPortfolio, type Portfolio, type Scenario } from '@/lib/engine';
+type Context={state:Portfolio;ready:boolean;storageError:string;activeScenario:Scenario|undefined;setActiveScenario:React.Dispatch<React.SetStateAction<Scenario|undefined>>;mutate:(fn:(s:Portfolio)=>Portfolio,options?:{replace:boolean})=>Promise<void>};
 const PortfolioContext=createContext<Context|null>(null);
 export function PortfolioProvider({children}:{children:React.ReactNode}){
   const [state,setState]=useState<Portfolio>(emptyPortfolio),[ready,setReady]=useState(false),[storageError,setStorageError]=useState('');
+  const [activeScenario,setActiveScenario]=useState<Scenario|undefined>();
   useEffect(()=>{
     try{const raw=localStorage.getItem(STORAGE_KEY);const initial=raw?loadPortfolio(raw):demoPortfolio();if(!raw)localStorage.setItem(STORAGE_KEY,JSON.stringify(initial));setState(initial);setStorageError('');}
     catch{setStorageError('Saved data could not be read. Your stored copy has been preserved. Reset or load the demo to recover.');}
@@ -17,6 +18,6 @@ export function PortfolioProvider({children}:{children:React.ReactNode}){
     try{if(navigator.locks)await navigator.locks.request('roundup-portfolio-write',commit);else commit();}
     catch(e){throw e instanceof Error?e:new Error('Unable to save. Browser storage may be full or disabled.');}
   },[]);
-  return <PortfolioContext.Provider value={{state,ready,storageError,mutate}}>{children}</PortfolioContext.Provider>;
+  return <PortfolioContext.Provider value={{state,ready,storageError,mutate,activeScenario,setActiveScenario}}>{children}</PortfolioContext.Provider>;
 }
 export function usePortfolio(){const value=useContext(PortfolioContext);if(!value)throw new Error('Missing portfolio provider');return value;}
