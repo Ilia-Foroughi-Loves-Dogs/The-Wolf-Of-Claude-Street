@@ -1,129 +1,293 @@
 "use client";
 import Link from 'next/link';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, Bell, Check, CheckCheck, ChevronDown, ChevronRight, CircleHelp, Coffee, Download, FlaskConical, Gauge, LayoutDashboard, Leaf, LineChart, LoaderCircle, LockKeyhole, Menu, Plus, Repeat, RotateCcw, Search, Send, Settings2, ShieldCheck, ShoppingBag, ShoppingCart, SlidersHorizontal, Sparkles, Target, TrendingUp, Trophy, Wallet, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, CircleHelp, Coffee, Download, Home as HomeIcon, LineChart, LoaderCircle, LogOut, MessageCircleQuestion, PiggyBank, Plus, Repeat, RotateCcw, Search, Settings as SettingsIcon, ShieldCheck, ShoppingBag, ShoppingCart, Target, Trophy, X, type LucideIcon } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
-import { ActivityChart, SavingsChart } from './charts';
-import { Invest, Sparkline } from './invest';
+import { Card, Empty, PageTitle, WolfMark, initials, signedMoney, signedPercent } from './ui/kit';
+import { ActivityChart } from './charts';
+import { Ask } from './ask';
+import { Invest } from './invest';
+import { useAccount } from './account-provider';
 import { useMarkets } from './market-provider';
-import { Empty, IconTile, Metric, PageHeading, PanelTitle, Pill, WolfMark, signedMoney, signedPercent } from './ui/kit';
 import { usePortfolio } from './portfolio-provider';
 import { SportsSimulator } from './sports-simulator';
-import { addPurchase, balances, holdings, portfolioValue, runAutoInvest, demoPortfolio, emptyPortfolio, generateReview, id, money, parseAmount, projection, purchaseAllocation, riskStatus, saveReview, updateAllocation, updateLimits, type Limits, type Outcome, type Portfolio, type Purchase, type Scenario } from '@/lib/engine';
+import { addPurchase, balances, demoPortfolio, emptyPortfolio, generateReview, id, money, parseAmount, portfolioValue, purchaseAllocation, runAutoInvest, saveReview, updateAllocation, updateLimits, type LedgerEntry, type Limits, type Portfolio } from '@/lib/engine';
 
-const navigation=[{key:'dashboard',label:'Dashboard',icon:LayoutDashboard,path:'/'},{key:'invest',label:'Invest',icon:LineChart,path:'/invest'},{key:'savings',label:'Savings',icon:Wallet,path:'/savings'},{key:'transactions',label:'Transactions',icon:ArrowDownLeft,path:'/transactions'},{key:'simulator',label:'Sports Lab',icon:Trophy,path:'/simulator'},{key:'advisor',label:'AI Advisor',icon:Sparkles,path:'/advisor'},{key:'settings',label:'Settings',icon:Settings2,path:'/settings'}];
-type Notify=(message:string)=>void;
-type Mutate=(fn:(s:Portfolio)=>Portfolio)=>Promise<void>;
-const prettyDate=(at:string)=>new Date(at).toLocaleDateString('en-US',{month:'short',day:'numeric'});
-const purchasesOf=(state:Portfolio)=>state.ledger.filter((e):e is Purchase=>e.kind==='purchase');
-const outcomesOf=(state:Portfolio)=>state.ledger.filter((e):e is Outcome=>e.kind==='outcome');
-function MerchantIcon({category}:{category:string}){return <span className={`merchant-icon category-${category.split(' ')[0].toLowerCase()}`}>{category==='Food & drink'?<Coffee size={17}/>:category==='Groceries'?<ShoppingCart size={17}/>:category==='Transport'?<ArrowUpRight size={17}/>:<ShoppingBag size={17}/>}</span>;}
+type Notify = (message: string) => void;
+type Mutate = (fn: (s: Portfolio) => Portfolio) => Promise<void>;
+type NavItem = { key: string; label: string; icon: LucideIcon; path: string; mobile: boolean };
+const NAV: NavItem[] = [
+  { key: 'dashboard', label: 'Home', icon: HomeIcon, path: '/', mobile: true },
+  { key: 'invest', label: 'Invest', icon: LineChart, path: '/invest', mobile: true },
+  { key: 'activity', label: 'Activity', icon: ArrowLeftRight, path: '/activity', mobile: true },
+  { key: 'simulator', label: 'Sports Lab', icon: Trophy, path: '/simulator', mobile: true },
+  { key: 'advisor', label: 'Ask a question', icon: MessageCircleQuestion, path: '/advisor', mobile: false },
+  { key: 'settings', label: 'Settings', icon: SettingsIcon, path: '/settings', mobile: true },
+];
+const CATEGORIES = ['Food & drink', 'Groceries', 'Transport', 'Shopping', 'Other'];
+const shortDate = (at: string) => new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
-export function Application({view}:{view:string}){
-  const {state,ready,storageError,mutate,activeScenario,setActiveScenario}=usePortfolio();
-  const [purchaseOpen,setPurchaseOpen]=useState(false),[reviewOpen,setReviewOpen]=useState(false),[helpOpen,setHelpOpen]=useState(false),[mobile,setMobile]=useState(false),[reset,setReset]=useState<'demo'|'empty'|null>(null),[notice,setNotice]=useState(''),[notifications,setNotifications]=useState(false);
-  useEffect(()=>{setMobile(false);},[view]);
-  useEffect(()=>{if(!notice)return;const timer=setTimeout(()=>setNotice(''),6500);return()=>clearTimeout(timer);},[notice]);
-  const notify:Notify=message=>setNotice(message);
-  async function review(){try{await mutate(s=>saveReview(s));setReviewOpen(true);}catch(e){notify((e as Error).message);}}
-  const selected=navigation.find(n=>n.key===view)!;
-  return <div className="app-shell">
-    {mobile&&<button className="mobile-shade" aria-label="Close navigation" onClick={()=>setMobile(false)}/>}
-    <aside className={`sidebar ${mobile?'sidebar-open':''}`}>
-      <Link href="/" className="brand" aria-label="Wolf of Claude Street dashboard"><span className="brand-symbol"><WolfMark size={24}/></span><span className="brand-text"><span className="brand-small">The Wolf of</span><span className="brand-name">Claude Street</span></span></Link>
-      <div className="workspace"><span className="workspace-icon">A</span><div><strong>Alex’s pack</strong><span>Personal demo portfolio</span></div><ChevronDown size={15}/></div>
-      <div className="nav-caption">WORKSPACE</div>
-      <nav aria-label="Main navigation">{navigation.map(({key,label,icon:Icon,path})=><Link key={key} href={path} aria-label={label} className={`nav-link ${view===key?'active':''}`} aria-current={view===key?'page':undefined}><Icon size={18} strokeWidth={1.7}/><span>{label}</span>{key==='advisor'&&<span className="nav-ai">AI</span>}{view===key&&<span className="active-dot"/>}</Link>)}</nav>
-      <div className="sidebar-bottom"><div className="safe-card"><span className="safe-icon"><ShieldCheck size={23}/></span><h3>Small change. Big ambitions.</h3><p>Round up, save, and let it compound.<br/>Sports stay strictly virtual.</p><Link href="/invest">Start investing <ArrowUpRight size={14}/></Link></div><button className="sidebar-help" onClick={()=>setHelpOpen(true)}><CircleHelp size={17}/>How it works<ArrowUpRight size={14}/></button><div className="profile"><span className="avatar">AM</span><div><strong>Alex Morgan</strong><span>Demo account</span></div><span className="profile-dot"/></div></div>
+export function Application({ view }: { view: string }) {
+  const { account, logOut } = useAccount();
+  const { state, ready, storageError, mutate, activeScenario, setActiveScenario } = usePortfolio();
+  const [purchaseOpen, setPurchaseOpen] = useState(false), [helpOpen, setHelpOpen] = useState(false), [reviewOpen, setReviewOpen] = useState(false), [reset, setReset] = useState<'demo' | 'empty' | null>(null), [notice, setNotice] = useState('');
+  useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 6000); return () => clearTimeout(timer); }, [notice]);
+  const notify: Notify = message => setNotice(message);
+  async function review() { try { await mutate(s => saveReview(s)); setReviewOpen(true); } catch (e) { notify((e as Error).message); } }
+
+  return <div className="app">
+    <aside className="side">
+      <Link href="/" className="logo"><span className="logo-mark"><WolfMark size={20} /></span>Wolf of Claude Street</Link>
+      <nav aria-label="Main">{NAV.map(({ key, label, icon: Icon, path }) => <Link key={key} href={path} className={`side-link ${view === key ? 'active' : ''}`} aria-current={view === key ? 'page' : undefined}><Icon size={19} strokeWidth={1.8} />{label}</Link>)}</nav>
+      <button type="button" className="side-link side-help" onClick={() => setHelpOpen(true)}><CircleHelp size={19} strokeWidth={1.8} />How it works</button>
+      <div className="side-user">
+        <span className="avatar">{initials(account.name)}</span>
+        <span className="side-user-text"><strong>{account.name}</strong><small>{account.email}</small></span>
+        <button type="button" className="icon-btn" onClick={logOut} aria-label="Log out" title="Log out"><LogOut size={17} /></button>
+      </div>
     </aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumbs"><button className="mobile-menu" onClick={()=>setMobile(!mobile)} aria-label="Open navigation"><Menu size={21}/></button><span className="desktop-crumb">Workspace</span><ChevronRight size={13} className="desktop-crumb"/><span>{selected.label}</span></div><div className="topbar-right"><span className="simulation-indicator"><span/>Simulation mode</span><div className="topbar-divider"/><button className="icon-button" aria-label="How this simulation works" onClick={()=>setHelpOpen(true)}><CircleHelp size={18}/></button><div className="notification-wrap"><button className="icon-button" aria-label="View notifications" aria-expanded={notifications} onClick={()=>setNotifications(!notifications)}><Bell size={18}/><i/></button>{notifications&&<div className="notification-popover"><strong>Your portfolio, at a glance</strong><p><ShieldCheck size={17}/> Protected savings are isolated.</p><p><Wallet size={17}/> {purchasesOf(state).length} simulated purchases recorded.</p><p><FlaskConical size={17}/> No real funds or bank accounts connected.</p></div>}</div><span className="avatar avatar-small">AM</span></div></header>
-      <main className="main-content">
-        {storageError&&<div className="alert alert-error" role="alert">{storageError}</div>}
-        {!ready?<div className="loading-screen"><span className="brand-symbol"><WolfMark size={24}/></span><LoaderCircle className="spin" size={22}/><p>Getting your small change together…</p></div>:<div className="page-enter" key={view}>
-          {view==='dashboard'&&<Dashboard state={state} onPurchase={()=>setPurchaseOpen(true)} onDemo={()=>setReset('demo')} onReview={review}/>}
-          {view==='invest'&&<Invest state={state} mutate={mutate} notify={notify}/>}
-          {view==='transactions'&&<Transactions state={state} onPurchase={()=>setPurchaseOpen(true)}/>}
-          {view==='savings'&&<Savings state={state} mutate={mutate} notify={notify} onPurchase={()=>setPurchaseOpen(true)}/>}
-          {view==='simulator'&&<SportsSimulator state={state} mutate={mutate} notify={notify} onReview={review} onScenarioChange={setActiveScenario}/>}
-          {view==='advisor'&&<Advisor state={state} scenario={activeScenario}/>}
-          {view==='settings'&&<Settings state={state} mutate={mutate} notify={notify} onReset={()=>setReset('empty')} onDemo={()=>setReset('demo')}/>}
-        </div>}
-        <footer className="page-footer"><span><WolfMark size={13}/> Wolf of Claude Street · built for better financial habits.</span><span>All balances & outcomes are simulated <span className="footer-dot">·</span> No real-money activity</span></footer>
-      </main>
-    </div>
-    <Dialog open={purchaseOpen} onOpenChange={setPurchaseOpen}><DialogContent><PurchaseForm state={state} mutate={mutate} notify={notify} onClose={()=>setPurchaseOpen(false)}/></DialogContent></Dialog>
-    <Dialog open={reviewOpen} onOpenChange={setReviewOpen}><DialogContent><div className="dialog-eyebrow"><ShieldCheck size={17}/> YOUR WEEKLY CHECK-IN</div><DialogTitle>Room to explore. Limits to protect.</DialogTitle><DialogDescription>A factual review of the last seven days of recorded simulations.</DialogDescription>{state.reviews[0]&&<ReviewReport state={state}/>}<Button className="full-width" variant="outline" onClick={()=>setReviewOpen(false)}>Got it <Check size={16}/></Button></DialogContent></Dialog>
-    <Dialog open={helpOpen} onOpenChange={setHelpOpen}><DialogContent><div className="dialog-eyebrow"><Leaf size={17}/> A LITTLE CHANGE GOES A LONG WAY</div><DialogTitle>Meet your money’s next chapter.</DialogTitle><DialogDescription>Wolf of Claude Street is an educational prototype. Market prices are real; every purchase, balance, trade, and outcome is simulated.</DialogDescription><div className="how-list"><div><span>01</span><section><h3>Round up your everyday</h3><p>A $4.35 coffee creates a $0.65 round-up. Whole-dollar purchases create no round-up.</p></section></div><div><span>02</span><section><h3>Protect the bigger part</h3><p>By default, $0.52 goes to protected savings and $0.13 to a separate virtual budget.</p></section></div><div><span>03</span><section><h3>Put it to work</h3><p>Invest savings in fractional shares of the S&P 500, index funds, and top stocks — by hand or with auto-invest.</p></section></div><div><span>04</span><section><h3>Explore within your limits</h3><p>Learn about probability using real schedules, hypothetical assumptions, and strict exposure limits. Savings never fund a scenario.</p></section></div></div><Button className="full-width" onClick={()=>{setHelpOpen(false);setPurchaseOpen(true);}}>Try a coffee round-up <ArrowRight size={16}/></Button></DialogContent></Dialog>
-    <Dialog open={reset!==null} onOpenChange={open=>!open&&setReset(null)}><DialogContent><div className="dialog-eyebrow"><RotateCcw size={17}/> DEMO CONTROLS</div><DialogTitle>{reset==='demo'?'A fresh portfolio to explore.':'Start with a clean slate?'}</DialogTitle><DialogDescription>{reset==='demo'?'Replace this browser’s portfolio with 50 simulated purchases, six illustrative scenarios, and a weekly review.':'This clears purchases, outcomes, settings, and reviews in this browser. You can load the demo portfolio again anytime.'}</DialogDescription><div className="dialog-actions"><Button variant="outline" onClick={()=>setReset(null)}>Keep my progress</Button><Button onClick={async()=>{try{await mutate(()=>reset==='demo'?demoPortfolio():emptyPortfolio(),{replace:true});notify(reset==='demo'?'Demo portfolio loaded: 50 purchases, protected savings, and simulation history.':'Demo reset. Your next round-up starts here.');setReset(null);}catch(e){notify((e as Error).message);}}}>{reset==='demo'?'Load Demo Portfolio':'Reset demo'}<ArrowRight size={16}/></Button></div></DialogContent></Dialog>
-    {notice&&<div className="toast" role="status"><span><CheckCheck size={18}/></span><p>{notice}</p><button onClick={()=>setNotice('')} aria-label="Dismiss message"><X size={15}/></button></div>}
+
+    <header className="mobile-top">
+      <Link href="/" className="logo"><span className="logo-mark"><WolfMark size={18} /></span>Wolf of Claude Street</Link>
+      <div><Link href="/advisor" className="icon-btn" aria-label="Ask a question"><MessageCircleQuestion size={20} /></Link><Link href="/settings" className="avatar avatar-sm" aria-label="Account settings">{initials(account.name)}</Link></div>
+    </header>
+
+    <main className="content">
+      {storageError && <div className="notice notice-error" role="alert">{storageError}</div>}
+      {!ready ? <div className="loading"><LoaderCircle className="spin" size={22} />Loading…</div> : <div className="page" key={view}>
+        {view === 'dashboard' && <Home state={state} mutate={mutate} notify={notify} onPurchase={() => setPurchaseOpen(true)} onHelp={() => setHelpOpen(true)} />}
+        {view === 'invest' && <Invest state={state} mutate={mutate} notify={notify} />}
+        {view === 'activity' && <Activity state={state} onPurchase={() => setPurchaseOpen(true)} />}
+        {view === 'simulator' && <SportsSimulator state={state} mutate={mutate} notify={notify} onReview={review} onScenarioChange={setActiveScenario} />}
+        {view === 'advisor' && <Ask state={state} scenario={activeScenario} />}
+        {view === 'settings' && <Settings state={state} mutate={mutate} notify={notify} onReset={setReset} />}
+      </div>}
+      <footer className="app-footer">Practice app · Real market prices, pretend money · No bank connected</footer>
+    </main>
+
+    <nav className="tabbar" aria-label="Main">{NAV.filter(n => n.mobile).map(({ key, label, icon: Icon, path }) => <Link key={key} href={path} className={view === key ? 'active' : ''} aria-current={view === key ? 'page' : undefined}><Icon size={21} strokeWidth={1.8} /><span>{label === 'Sports Lab' ? 'Sports' : label}</span></Link>)}</nav>
+
+    <Dialog open={purchaseOpen} onOpenChange={setPurchaseOpen}><DialogContent><PurchaseForm state={state} mutate={mutate} notify={notify} onClose={() => setPurchaseOpen(false)} /></DialogContent></Dialog>
+    <Dialog open={helpOpen} onOpenChange={setHelpOpen}><DialogContent><HowItWorks onStart={() => { setHelpOpen(false); setPurchaseOpen(true); }} /></DialogContent></Dialog>
+    <Dialog open={reviewOpen} onOpenChange={setReviewOpen}><DialogContent><DialogTitle>Your weekly Sports Lab check-in</DialogTitle><DialogDescription>A summary of the last seven days.</DialogDescription>{state.reviews[0] && <ReviewReport state={state} />}<Button className="full-width" variant="outline" onClick={() => setReviewOpen(false)}>Done</Button></DialogContent></Dialog>
+    <Dialog open={reset !== null} onOpenChange={open => !open && setReset(null)}><DialogContent>
+      <DialogTitle>{reset === 'demo' ? 'Load sample data?' : 'Start over?'}</DialogTitle>
+      <DialogDescription>{reset === 'demo' ? 'This replaces everything in your account with a month of example purchases and investments.' : 'This deletes all purchases, investments and settings in your account. Your login stays.'}</DialogDescription>
+      <div className="dialog-buttons"><Button variant="outline" onClick={() => setReset(null)}>Cancel</Button><Button className={reset === 'empty' ? 'btn-danger' : ''} onClick={async () => { try { await mutate(() => reset === 'demo' ? demoPortfolio() : emptyPortfolio(), { replace: true }); notify(reset === 'demo' ? 'Sample data loaded.' : 'Your account has been cleared.'); setReset(null); } catch (e) { notify((e as Error).message); } }}>{reset === 'demo' ? 'Load sample data' : 'Delete everything'}</Button></div>
+    </DialogContent></Dialog>
+    {notice && <div className="toast" role="status"><Check size={17} /><p>{notice}</p><button onClick={() => setNotice('')} aria-label="Dismiss"><X size={15} /></button></div>}
   </div>;
 }
 
-function Dashboard({state,onPurchase,onDemo,onReview}:{state:Portfolio;onPurchase:()=>void;onDemo:()=>void;onReview:()=>void}){
-  const b=balances(state),transactions=purchasesOf(state),r=riskStatus(state),p=projection(state);
-  const {prices,quotes}=useMarkets(),pv=portfolioValue(state,prices),owned=holdings(state);
-  const [days,setDays]=useState(30),[visible,setVisible]=useState<Record<string,boolean>>({roundups:true,savings:true,invested:true,risk:false,performance:false});
-  const actualSavings=b.roundups?Math.round((b.roundups-b.funding)/b.roundups*100):100-state.allocation;
+function Home({ state, mutate, notify, onPurchase, onHelp }: { state: Portfolio; mutate: Mutate; notify: Notify; onPurchase: () => void; onHelp: () => void }) {
+  const { account } = useAccount(), { prices } = useMarkets();
+  const b = balances(state), pv = portfolioValue(state, prices), total = b.savings + pv.valueCents + b.risk;
+  const [days, setDays] = useState(30), [goalOpen, setGoalOpen] = useState(false);
+  const hour = new Date().getHours(), greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const purchases = state.ledger.filter(e => e.kind === 'purchase').length;
+  const saved = b.savings + pv.valueCents, progress = Math.min(100, saved / state.goal.targetCents * 100);
+  const parts = [{ key: 'savings', label: 'Savings', value: b.savings }, { key: 'invested', label: 'Investments', value: pv.valueCents }, { key: 'sports', label: 'Sports Lab', value: b.risk }];
+  const rule = state.autoInvest;
   return <>
-    <PageHeading eyebrow="WELCOME TO THE FLOOR" title="Small change. Serious ambition." description="Round up every purchase, stack your savings, and put them to work in the market."><Button variant="outline" onClick={onDemo}><RotateCcw size={15}/>Load Demo Portfolio</Button><Button onClick={onPurchase}><Plus size={17}/>Add purchase</Button></PageHeading>
-    <div className="welcome-banner"><div className="welcome-orbit"><WolfMark size={22}/></div><div><strong>Your everyday is building an empire.</strong><span>{transactions.length?`${transactions.length} purchases. ${money(b.roundups)} in small change. ${owned.length?`${money(pv.valueCents)} invested across ${owned.length} holdings.`:'Ready to invest.'}`:'Your first round-up is the start of something good.'}</span></div><Link href="/invest" className="pill pill-gold banner-cta"><LineChart size={12}/>Go to Invest</Link><div className="banner-lines" aria-hidden="true"><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div>
-    <div className="stats-grid">
-      <Metric title="Total round-ups" value={money(b.roundups)} icon={ArrowUpRight} tone="gold" detail={<><span className="gold-text">{transactions.length} purchases</span><span>little things add up</span></>}/>
-      <Metric title="Savings cash" value={money(b.savings)} icon={ShieldCheck} tone="blue" detail={<><span className="blue-text"><LockKeyhole size={11}/>Protected</span><span>ready to invest</span></>}/>
-      <Metric title="Investments" value={money(pv.valueCents)} icon={LineChart} tone={pv.gainCents>=0?'green':'red'} detail={<><span className={pv.gainCents>=0?'gain-text':'loss-text'}>{signedMoney(pv.gainCents,money)} ({signedPercent(pv.gainPercent,1)})</span><span>{state.autoInvest.enabled?'auto-invest on':'live prices'}</span></>}/>
-      <Metric title="Sports budget" value={money(b.risk)} icon={Trophy} tone="purple" detail={<><span className="purple-text">{signedMoney(b.performance,money)} result</span><span>strictly virtual</span></>}/>
+    <PageTitle title={`${greeting}, ${account.name.split(' ')[0]}`} />
+    <section className="card hero">
+      <div className="hero-top">
+        <div><span className="label">Total balance</span><strong className="hero-amount">{money(total)}</strong>
+          {pv.costCents > 0 && pv.priced && <span className={`hero-change ${pv.gainCents >= 0 ? 'up' : 'down'}`}>Investments {pv.gainCents >= 0 ? 'up' : 'down'} {money(Math.abs(pv.gainCents))} ({signedPercent(pv.gainPercent, 1)})</span>}</div>
+        <div className="hero-actions"><Button onClick={onPurchase}><Plus size={17} />Add a purchase</Button><Link href="/invest" className="btn btn-outline"><LineChart size={16} />Invest</Link></div>
+      </div>
+      <div className="split-bar" aria-hidden="true">{parts.map(p => <i key={p.key} className={`seg-${p.key}`} style={{ flexGrow: total ? p.value : 1 }} />)}</div>
+      <div className="split-legend">{parts.map(p => <div key={p.key}><span><i className={`dot seg-${p.key}`} />{p.label}</span><strong>{money(p.value)}</strong></div>)}</div>
+    </section>
+
+    {purchases === 0 && <section className="card steps"><h2>How it works</h2><ol>
+      <li><span>1</span><div><strong>Add a purchase</strong><p>Bought a $4.35 coffee? It rounds up to $5.00, and the $0.65 goes to savings.</p></div></li>
+      <li><span>2</span><div><strong>Watch your savings grow</strong><p>Small change from every purchase adds up on its own.</p></div></li>
+      <li><span>3</span><div><strong>Invest it</strong><p>Put your savings into the S&P 500 or other funds, or let auto-invest do it for you.</p></div></li>
+    </ol><Button onClick={onPurchase}><Plus size={16} />Add your first purchase</Button></section>}
+
+    <div className="grid-2">
+      <Card title="Your money over time" action={<div className="segmented segmented-sm">{[[30, '1M'], [90, '3M'], [365, '1Y']].map(([value, label]) => <button key={value} type="button" className={days === value ? 'selected' : ''} aria-pressed={days === value} onClick={() => setDays(Number(value))}>{label}</button>)}</div>}>
+        <ActivityChart state={state} days={days} visible={{ savings: true, invested: true }} />
+        <div className="chart-key"><span><i className="dot seg-savings" />Savings</span><span><i className="dot seg-invested" />Invested</span></div>
+      </Card>
+      <Card title="Savings goal" action={<button type="button" className="link-btn" onClick={() => setGoalOpen(true)}>Edit</button>}>
+        <div className="goal">
+          <span className="goal-icon"><Target size={22} /></span>
+          <strong className="goal-name">{state.goal.name}</strong>
+          <div className="goal-amounts"><strong>{money(saved)}</strong><span>of {money(state.goal.targetCents)}</span></div>
+          <div className="progress" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label="Savings goal progress"><i style={{ width: `${progress}%` }} /></div>
+          <p className="muted">{progress >= 100 ? 'You reached your goal! Set a new one.' : `${money(Math.max(0, state.goal.targetCents - saved))} to go. Savings and investments both count.`}</p>
+        </div>
+      </Card>
     </div>
-    <div className="dashboard-main-grid">
-      <section className="panel chart-panel"><PanelTitle title="Financial activity" subtitle="Small contributions. Steady progress." action={<div className="range-switch" aria-label="Chart time range">{[[7,'7D'],[30,'1M'],[90,'3M'],[365,'1Y']].map(([value,label])=><button key={value} className={days===value?'selected':''} aria-pressed={days===value} onClick={()=>setDays(Number(value))}>{label}</button>)}</div>}/><div className="chart-summary"><strong>{money(b.total)}</strong><span>Total balance at cost<Pill tone="neutral">Simulated data</Pill></span></div><ActivityChart state={state} days={days} visible={visible}/><div className="chart-legend">{[['roundups','Round-ups'],['savings','Savings cash'],['invested','Invested'],['risk','Sports budget'],['performance','Sports result']].map(([key,label])=><button key={key} className={!visible[key]?'muted-legend':''} aria-pressed={visible[key]} onClick={()=>setVisible(v=>({...v,[key]:!v[key]}))}><i className={`legend-${key}`}/>{label}</button>)}</div></section>
-      <section className="panel allocation-panel"><PanelTitle title="Made for balance" subtitle="Your round-ups, thoughtfully split." action={<SlidersHorizontal size={16} className="muted"/>}/><div className="donut-wrap"><svg viewBox="0 0 160 160" className="allocation-donut" aria-label={`${actualSavings}% of contributions saved or invested`}><defs><linearGradient id="donut-gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#ffd77a"/><stop offset="100%" stopColor="#e0a526"/></linearGradient></defs><circle cx="80" cy="80" r="64" fill="none" stroke="#b9a3f5" strokeWidth="12"/><circle cx="80" cy="80" r="64" fill="none" stroke="url(#donut-gold)" strokeWidth="12" strokeDasharray={`${402.12*actualSavings/100} 402.12`} transform="rotate(-90 80 80)" strokeLinecap="round"/></svg><div className="donut-label"><ShieldCheck size={19}/><strong>{actualSavings}<small>%</small></strong><span>protected</span></div><span className="donut-spark spark-one">✦</span><span className="donut-spark spark-two">✦</span></div><div className="allocation-row"><span><i className="legend-savings"/>Saved & invested</span><strong>{money(b.roundups-b.funding)}</strong></div><div className="allocation-row"><span><i className="legend-risk"/>Sports budget contributions</span><strong>{money(b.funding)}</strong></div><Link href="/settings" className="text-link allocation-link">Manage your allocation<ArrowRight size={14}/></Link><div className="mini-note"><LockKeyhole size={13}/><span>Savings never enter the Sports Lab.</span></div></section>
+
+    <div className="grid-2">
+      <Card title="Recent activity" action={<Link href="/activity" className="link-btn">See all</Link>}>
+        <ActivityList entries={state.ledger.slice(-5).reverse()} />
+        {!state.ledger.length && <Empty title="Nothing here yet" description="Your purchases and investments will show up here." />}
+      </Card>
+      <Card title="Auto-invest" action={<Link href="/invest" className="link-btn">Change</Link>}>
+        <div className="auto-summary">
+          <span className={`status-pill ${rule.enabled ? 'on' : ''}`}>{rule.enabled ? 'On' : 'Off'}</span>
+          <p>{rule.enabled ? <>When your savings reach <strong>{money(rule.thresholdCents)}</strong>, we invest <strong>{rule.percent}%</strong> of it into {rule.mix.map(m => `${m.name} (${m.weight}%)`).join(', ')}.</> : 'Turn on auto-invest to put your savings into the market automatically.'}</p>
+          <Link href="/invest" className="btn btn-outline btn-sm"><Repeat size={14} />{rule.enabled ? 'Manage auto-invest' : 'Set up auto-invest'}</Link>
+        </div>
+        <button type="button" className="help-row" onClick={onHelp}><CircleHelp size={16} />New here? See how the app works</button>
+      </Card>
     </div>
-    <div className="dashboard-bottom-grid"><section className="panel recent-panel"><PanelTitle title="The little things that add up" subtitle="Your latest simulated round-ups." action={<Link href="/transactions" className="text-link">View all<ArrowRight size={14}/></Link>}/><TransactionTable transactions={transactions.slice(-4).reverse()} compact/>{!transactions.length&&<Empty title="A fresh start" description="Add a purchase to see your first round-up."/>}</section><section className="panel holdings-snapshot"><PanelTitle title="Your investments" subtitle="Live value of your holdings." action={<Link href="/invest" className="text-link">Open Invest<ArrowRight size={14}/></Link>}/>{owned.length?<div className="snapshot-list">{owned.slice(0,4).map(h=>{const q=quotes.find(x=>x.symbol===h.symbol),value=q?Math.round(h.shares*q.price*100):h.costCents,gain=value-h.costCents;return <div key={h.symbol} className="snapshot-row"><span className={`ticker ticker-${q?.kind??'stock'}`}>{h.symbol.replace('-','.')}</span><span className="snapshot-name"><strong>{h.name}</strong><small>{h.shares.toPrecision(3)} shares</small></span>{q&&<Sparkline values={q.history.slice(-30)} up={q.history.at(-1)!>=q.history.at(-30)!} width={80} height={28}/>}<span className="snapshot-value"><strong>{money(value)}</strong><small className={gain>=0?'gain-text':'loss-text'}>{signedMoney(gain,money)}</small></span></div>;})}</div>:<Empty icon={LineChart} title="Nothing invested yet" description="Turn your savings into S&P 500 shares in a couple of taps."/>}<div className="snapshot-foot"><span><Repeat size={13}/>Auto-invest {state.autoInvest.enabled?'on':'off'} · {state.autoInvest.mix.map(m=>`${m.symbol} ${m.weight}%`).join(' · ')}</span><Link href="/invest" className="btn btn-primary btn-sm">Invest {money(b.savings)}<ArrowRight size={13}/></Link></div></section></div>
-    <section className="risk-strip"><div className="risk-strip-icon"><ShieldCheck size={21}/></div><div><strong>Curiosity, with guardrails.</strong><p>{money(r.maxStake)} maximum next scenario. Your protected savings stay out of reach.</p></div><Pill><span className="tiny-dot"/>Limits active</Pill><button className="text-link" onClick={onReview}>Review My Risk Limits<ArrowRight size={15}/></button></section>
+    <GoalDialog open={goalOpen} onOpenChange={setGoalOpen} state={state} mutate={mutate} notify={notify} />
   </>;
 }
 
-function TransactionTable({transactions,compact=false}:{transactions:Purchase[];compact?:boolean}){return <div className="table-scroll"><table className={compact?'transactions-table compact':'transactions-table'}><thead><tr><th>Merchant</th>{!compact&&<th>Date</th>}<th>Purchase</th><th>Round-up</th>{!compact&&<><th>Protected</th><th>Virtual</th></>}<th>Status</th></tr></thead><tbody>{transactions.map(t=><tr key={t.id}><td><div className="merchant"><MerchantIcon category={t.category}/><span><strong>{t.merchant}</strong><small>{compact?prettyDate(t.at):t.category}</small></span></div></td>{!compact&&<td>{prettyDate(t.at)}</td>}<td className="amount-cell">{money(t.amountCents)}</td><td className="positive amount-cell">+{money(t.roundupCents)}</td>{!compact&&<><td className="amount-cell">{money(t.savingsCents)}</td><td className="amount-cell purple-text">{money(t.riskCents)}</td></>}<td><span className="completed"><span/>Allocated</span></td></tr>)}</tbody></table></div>;}
-function Transactions({state,onPurchase}:{state:Portfolio;onPurchase:()=>void}){
-  const [search,setSearch]=useState(''),[category,setCategory]=useState('All categories');
-  const purchases=purchasesOf(state),b=balances(state),filtered=[...purchases].reverse().filter(t=>(category==='All categories'||t.category===category)&&`${t.merchant} ${t.category}`.toLowerCase().includes(search.toLowerCase()));
-  function download(){const quote=(value:string)=>`"${value.replaceAll('"','""')}"`;const csv=['Date,Merchant,Purchase USD,Round-up USD,Protected USD,Virtual USD',...filtered.map(t=>[t.at,quote(t.merchant),(t.amountCents/100).toFixed(2),(t.roundupCents/100).toFixed(2),(t.savingsCents/100).toFixed(2),(t.riskCents/100).toFixed(2)].join(','))].join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download='wolf-of-claude-street-transactions.csv';a.click();URL.revokeObjectURL(url);}
-  return <><PageHeading eyebrow="EVERYDAY, A LITTLE FURTHER" title="Your change has a story." description="Every simulated purchase. Every penny put to work."><Button variant="outline" onClick={download}><Download size={15}/>Export CSV</Button><Button onClick={onPurchase}><Plus size={17}/>Add purchase</Button></PageHeading><div className="stats-grid stats-three"><Metric title="Simulated purchases" value={String(purchases.length)} icon={ShoppingBag} detail={<span>{money(b.spent)} in simulated spending</span>}/><Metric title="Change collected" value={money(b.roundups)} icon={ArrowDownLeft} detail={<span>Rounded up to the next whole dollar</span>}/><Metric title="Average round-up" value={money(purchases.length?Math.round(b.roundups/purchases.length):0)} icon={Leaf} detail={<span>Small amounts. Consistent habits.</span>}/></div><section className="panel"><PanelTitle title="Transaction history" subtitle="All purchases are simulated and stored in this browser." action={<Pill tone="neutral">{filtered.length} transactions</Pill>}/><div className="table-toolbar"><label className="search-input"><Search size={17}/><input aria-label="Search transactions" placeholder="Search merchants or categories…" value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Filter transactions by category" value={category} onChange={e=>setCategory(e.target.value)}>{['All categories','Food & drink','Groceries','Transport','Shopping','Other'].map(c=><option key={c}>{c}</option>)}</select></div><TransactionTable transactions={filtered}/>{!filtered.length&&<Empty title="No purchases here yet" description="Try another search or add your first simulated purchase."/>}<div className="table-bottom"><ShieldCheck size={14}/><span>Each purchase is processed once. Every cent has a destination.</span><span>{filtered.length} of {purchases.length} purchases</span></div></section></>;
+function GoalDialog({ open, onOpenChange, state, mutate, notify }: { open: boolean; onOpenChange: (open: boolean) => void; state: Portfolio; mutate: Mutate; notify: Notify }) {
+  const [name, setName] = useState(state.goal.name), [target, setTarget] = useState((state.goal.targetCents / 100).toFixed(2)), [error, setError] = useState('');
+  useEffect(() => { if (open) { setName(state.goal.name); setTarget((state.goal.targetCents / 100).toFixed(2)); setError(''); } }, [open, state.goal]);
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent>
+    <DialogTitle>Your savings goal</DialogTitle><DialogDescription>What are you saving for?</DialogDescription>
+    <form className="stack" onSubmit={async e => { e.preventDefault(); try { const targetCents = parseAmount(target); if (targetCents < 100) throw new Error('Set a goal of at least $1.00.'); await mutate(s => ({ ...s, goal: { name: name.trim(), targetCents } })); onOpenChange(false); notify('Goal updated.'); } catch (err) { setError((err as Error).message); } }}>
+      <label className="field">Goal<input value={name} onChange={e => setName(e.target.value)} maxLength={60} required placeholder="Emergency fund" /></label>
+      <label className="field">Amount<span className="money-field"><span>$</span><input value={target} onChange={e => setTarget(e.target.value)} inputMode="decimal" required /></span></label>
+      {error && <div className="notice notice-error">{error}</div>}
+      <Button type="submit" className="full-width">Save goal</Button>
+    </form>
+  </DialogContent></Dialog>;
 }
 
-function PurchaseForm({state,mutate,notify,onClose}:{state:Portfolio;mutate:Mutate;notify:Notify;onClose:()=>void}){
-  const [merchant,setMerchant]=useState('Coffee'),[amount,setAmount]=useState('4.35'),[category,setCategory]=useState('Food & drink'),[allocation,setAllocation]=useState(state.allocation),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-  const purchaseId=useRef(id());
-  const {prices}=useMarkets();
-  let preview={roundupCents:0,savingsCents:0,riskCents:0},valid=false;
-  try{preview=purchaseAllocation({...state,allocation},parseAmount(amount));valid=true;}catch{}
-  async function submit(e:React.FormEvent){e.preventDefault();if(busy)return;setBusy(true);setError('');try{let invested=0;await mutate(s=>{const next=addPurchase(updateAllocation(s,allocation),{id:purchaseId.current,merchant,category,amount});const auto=runAutoInvest(next,prices);invested=auto.investedCents;return auto.state;});notify(`${money(preview.roundupCents)} rounded up — ${money(preview.savingsCents)} saved, ${money(preview.riskCents)} to sports.${invested?` Auto-invest put ${money(invested)} to work.`:''}`);onClose();}catch(e){setError((e as Error).message);setBusy(false);}}
-  return <form onSubmit={submit}><div className="dialog-eyebrow"><Plus size={17}/> EVERY PURCHASE, A SMALL POSSIBILITY</div><DialogTitle>A little change. All yours.</DialogTitle><DialogDescription>Add a simulated purchase and give your spare change a purpose.</DialogDescription><div className="form-stack"><label>Merchant<input value={merchant} onChange={e=>setMerchant(e.target.value)} maxLength={80} required placeholder="e.g. Sunday Coffee"/></label><div className="form-grid"><label>Purchase amount<div className="money-input"><span>$</span><input aria-label="Purchase amount" inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} required/></div></label><label>Category<select value={category} onChange={e=>setCategory(e.target.value)}>{['Food & drink','Groceries','Transport','Shopping','Other'].map(c=><option key={c}>{c}</option>)}</select></label></div><div className="roundup-preview"><span>Your automatic round-up</span><strong>{money(preview.roundupCents)}</strong><small>{valid?`${money(parseAmount(amount))} → ${money(parseAmount(amount)+preview.roundupCents)}`:'Enter a valid purchase amount'}</small></div><AllocationControl allocation={allocation} max={state.limits.allocation} onChange={setAllocation}/><div className="split-preview"><div><ShieldCheck size={18}/><span>Protected savings</span><strong>+{money(preview.savingsCents)}</strong></div><div><FlaskConical size={18}/><span>Sports budget</span><strong>+{money(preview.riskCents)}</strong></div></div><p className="field-hint"><LockKeyhole size={13}/>This split applies to new purchases. Existing savings stay protected.</p>{error&&<div className="alert alert-error" role="alert">{error}</div>}<Button type="submit" className="full-width" disabled={!valid||busy}>{busy?<LoaderCircle className="spin" size={17}/>:<Plus size={17}/>}Add simulated purchase</Button></div></form>;
+type Row = { id: string; type: 'purchase' | 'investment' | 'sports' | 'transfer'; icon: LucideIcon; title: string; detail: string; amount: string; amountClass?: string; secondary?: string };
+function describe(entry: LedgerEntry): Row {
+  if (entry.kind === 'purchase') return { id: entry.id, type: 'purchase', icon: entry.category === 'Food & drink' ? Coffee : entry.category === 'Groceries' ? ShoppingCart : ShoppingBag, title: entry.merchant, detail: `${entry.category} · ${shortDate(entry.at)}`, amount: money(entry.amountCents), secondary: entry.roundupCents ? `+${money(entry.roundupCents)} saved` : 'No change to round up' };
+  if (entry.kind === 'trade') return { id: entry.id, type: 'investment', icon: entry.side === 'buy' ? ArrowDownLeft : ArrowUpRight, title: `${entry.side === 'buy' ? 'Bought' : 'Sold'} ${entry.name}`, detail: `${entry.auto ? 'Auto-invest · ' : ''}${shortDate(entry.at)}`, amount: `${entry.side === 'buy' ? '−' : '+'}${money(entry.amountCents)}`, amountClass: entry.side === 'sell' ? 'up' : '', secondary: `${entry.shares < 1 ? entry.shares.toPrecision(3) : entry.shares.toFixed(4)} shares` };
+  if (entry.kind === 'outcome') return { id: entry.id, type: 'sports', icon: Trophy, title: `Sports Lab ${entry.won ? 'win' : 'loss'}`, detail: `${entry.scenario.event} · ${shortDate(entry.at)}`, amount: signedMoney(entry.netCents, money), amountClass: entry.netCents >= 0 ? 'up' : 'down', secondary: 'Pretend money' };
+  return { id: entry.id, type: 'transfer', icon: PiggyBank, title: 'Moved to savings', detail: shortDate(entry.at), amount: `+${money(entry.amountCents)}`, amountClass: 'up', secondary: 'From Sports Lab' };
 }
-function AllocationControl({allocation,max,onChange}:{allocation:number;max:number;onChange:(n:number)=>void}){return <div className="allocation-control"><div className="allocation-control-label"><span><i className="legend-savings"/>{100-allocation}% Protected</span><span><i className="legend-risk"/>{allocation}% Virtual</span></div><input type="range" aria-label="Virtual risk allocation percentage" min={0} max={max} step={1} value={allocation} onChange={e=>onChange(Number(e.target.value))} style={{'--range-fill':`${max?allocation/max*100:0}%`} as React.CSSProperties}/><div className="range-labels"><span>Savings first</span><span>{max}% maximum virtual allocation</span></div></div>;}
-
-function Savings({state,mutate,notify,onPurchase}:{state:Portfolio;mutate:Mutate;notify:Notify;onPurchase:()=>void}){
-  const [goalOpen,setGoalOpen]=useState(false),[name,setName]=useState(state.goal.name),[target,setTarget]=useState((state.goal.targetCents/100).toFixed(2)),[error,setError]=useState('');
-  const b=balances(state),p=projection(state),progress=Math.min(100,b.savings/state.goal.targetCents*100);
-  const history=[...state.ledger].reverse().filter(e=>e.kind==='purchase'||e.kind==='protect').slice(0,6);
-  return <><PageHeading eyebrow="A FOUNDATION FOR WHAT’S NEXT" title="Your future has a little more in it." description="A protected space for the things that matter."><Pill><LockKeyhole size={13}/>Isolated by design</Pill><Button onClick={onPurchase}><Plus size={17}/>Grow your savings</Button></PageHeading><div className="savings-hero"><div><span className="eyebrow">YOUR PROTECTED SAVINGS</span><strong>{money(b.savings)}</strong><p><ShieldCheck size={16}/>Every cent stays outside the risk simulator.</p></div><div className="savings-hero-art" aria-hidden="true"><ShieldCheck size={76} strokeWidth={1}/><span/><span/></div><div className="savings-hero-stat"><span>At your current pace</span><strong>+{money(p.monthly)}<small>/month</small></strong><p>A straight-line estimate. No interest assumed.</p></div></div><div className="savings-grid"><section className="panel"><PanelTitle title="Your savings are taking shape" subtitle="Protected balance over the last 30 days · simulated" action={<Pill tone="neutral">1M</Pill>}/><SavingsChart state={state}/><div className="chart-caption"><Leaf size={14}/>Built from round-ups, one everyday purchase at a time.</div></section><section className="panel goal-panel"><PanelTitle title="Something to save for" action={<button className="text-link" onClick={()=>{setName(state.goal.name);setTarget((state.goal.targetCents/100).toFixed(2));setGoalOpen(true);}}>Edit goal<ArrowUpRight size={14}/></button>}/><span className="goal-icon"><Target size={28}/></span><h3>{state.goal.name}</h3><p>One small step closer.</p><div className="goal-amount"><strong>{money(b.savings)}</strong><span>of {money(state.goal.targetCents)}</span></div><div className="progress-track" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label="Savings goal progress"><i style={{width:`${progress}%`}}/></div><div className="goal-progress-label"><span>{progress.toFixed(0)}% of the way there</span><span>{money(Math.max(0,state.goal.targetCents-b.savings))} to go</span></div><div className="goal-note"><Sparkles size={16}/><span>{progress>=100?'You reached your goal. Make space for your next one.':p.monthly?`At this pace, about ${Math.ceil((state.goal.targetCents-b.savings)/p.monthly)} more months to your goal.`:'Add a purchase to start your savings journey.'}</span></div></section></div><div className="savings-grid"><section className="panel"><PanelTitle title="Every contribution counts" subtitle="Recent entries in your protected savings ledger."/>{history.length?<div className="savings-history">{history.map(e=><div key={e.id}><IconTile icon={e.kind==='protect'?ShieldCheck:ArrowDownLeft}/><span><strong>{e.kind==='purchase'?e.merchant:'Additional protection'}</strong><small>{prettyDate(e.at)} · {e.kind==='purchase'?'Purchase round-up':'Stricter risk limit'}</small></span><strong className="positive">+{money(e.kind==='purchase'?e.savingsCents:e.kind==='protect'?e.amountCents:0)}</strong></div>)}</div>:<Empty title="Your story starts with a cent" description="Add a purchase to begin protecting your change."/>}</section><section className="panel projection-panel"><IconTile icon={TrendingUp}/><h2>Picture six months from now.</h2><p>Keep your current round-up pace and allocation, and your protected savings could reach</p><strong>{money(p.future)}</strong><span>including your current {money(b.savings)} balance</span><div className="mini-note"><CircleHelp size={14}/><span>Based on {p.days} days of recorded purchase activity. Assumes unchanged activity and allocation; excludes interest. This is an illustration, not a guarantee.</span></div><Link href="/advisor" className="text-link">Walk me through the numbers<Sparkles size={15}/></Link></section></div><Dialog open={goalOpen} onOpenChange={setGoalOpen}><DialogContent><div className="dialog-eyebrow"><Target size={17}/> MAKE IT PERSONAL</div><DialogTitle>A goal worth the small steps.</DialogTitle><DialogDescription>Give your protected savings a destination.</DialogDescription><form className="form-stack" onSubmit={async e=>{e.preventDefault();try{const targetCents=parseAmount(target);if(targetCents<100)throw new Error('Set a goal of at least $1.00.');await mutate(s=>({...s,goal:{name:name.trim(),targetCents}}));setGoalOpen(false);notify('Savings goal updated. Every round-up brings it closer.');}catch(e){setError((e as Error).message);}}}><label>Goal name<input value={name} onChange={e=>setName(e.target.value)} maxLength={60} required/></label><label>Target amount ($)<input value={target} onChange={e=>setTarget(e.target.value)} inputMode="decimal" required/></label>{error&&<div className="alert alert-error">{error}</div>}<Button type="submit">Save goal<Check size={16}/></Button></form></DialogContent></Dialog></>;
+function ActivityList({ entries }: { entries: LedgerEntry[] }) {
+  return <ul className="rows">{entries.map(describe).map(r => { const Icon = r.icon; return <li key={r.id} className="row"><span className={`row-icon icon-${r.type}`}><Icon size={17} /></span><span className="row-main"><strong>{r.title}</strong><small>{r.detail}</small></span><span className="row-end"><strong className={r.amountClass}>{r.amount}</strong>{r.secondary && <small>{r.secondary}</small>}</span></li>; })}</ul>;
 }
 
-type Message={role:'user'|'assistant';text:string;mode?:string;notice?:string};
-function Advisor({state,scenario}:{state:Portfolio;scenario?:Scenario}){
-  const [messages,setMessages]=useState<Message[]>([]),[question,setQuestion]=useState(''),[busy,setBusy]=useState(false),[mode,setMode]=useState<string|null>(null),[error,setError]=useState('');
-  const bottom=useRef<HTMLDivElement>(null);
-  useEffect(()=>{if(messages.length)bottom.current?.scrollIntoView({behavior:'smooth',block:'nearest'});},[messages,busy]);
-  async function ask(text:string){if(!text.trim()||busy)return;setQuestion('');setError('');setBusy(true);setMessages(m=>[...m,{role:'user',text:text.trim()}]);try{const response=await fetch('/api/advisor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:text.trim(),portfolio:state,scenario})});const data=await response.json();if(!response.ok)throw new Error(data.error);setMode(data.mode);setMessages(m=>[...m,{role:'assistant',text:data.answer,mode:data.mode,notice:data.notice}]);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
-  const b=balances(state);
-  return <><PageHeading eyebrow="A CLEARER PICTURE OF YOUR MONEY" title="Meet Wolf Intelligence." description="Thoughtful explanations. Grounded in your actual simulated activity."><Pill tone="neutral"><Sparkles size={13}/>{mode==='claude'?'Claude connected':mode==='demo'?'Demo mode · deterministic':'Claude-ready · demo fallback'}</Pill></PageHeading><div className="advisor-layout"><section className="panel chat-panel"><div className="chat-top"><span className="intelligence-icon"><Sparkles size={22}/></span><div><strong>Wolf Intelligence</strong><span>Savings, investing & risk explainer</span></div><span className="read-only"><LockKeyhole size={12}/>Read-only</span></div><div className="chat-messages" aria-live="polite">{!messages.length?<div className="advisor-welcome"><div className="advisor-orb"><Sparkles size={35} strokeWidth={1.3}/></div><span className="eyebrow">MAKE SENSE OF YOUR SMALL CHANGE</span><h2>A little clarity goes a long way.</h2><p>Wondering where your savings could go?<br/>Let’s connect your everyday activity to the bigger picture.</p><div className="suggested-prompts">{[{icon:LineChart,text:'How are my investments doing?'},{icon:TrendingUp,text:'How much could I save in six months?'},{icon:ShieldCheck,text:'Explain my virtual risk limits.'},{icon:Gauge,text:scenario?'Explain my selected sports scenario.':'What do my simulation results mean?'},{icon:Coffee,text:'How does a coffee round-up work?'}].map(({icon:Icon,text})=><button key={text} onClick={()=>ask(text)}><Icon size={17}/><span>{text}</span><ArrowUpRight size={15}/></button>)}</div></div>:messages.map((m,i)=><div className={`chat-message message-${m.role}`} key={i}>{m.role==='assistant'&&<span className="chat-avatar"><Sparkles size={16}/></span>}<div>{m.role==='assistant'&&<span className="message-source">WOLF INTELLIGENCE · {m.mode==='demo'?'DETERMINISTIC DEMO':'CLAUDE'}</span>}<p>{m.text}</p>{m.notice&&<small className="amber-text">{m.notice}</small>}</div></div>)}{busy&&<div className="chat-thinking"><Sparkles size={16}/><span>Connecting your activity to the bigger picture</span><LoaderCircle className="spin" size={15}/></div>}{error&&<div className="alert alert-error" role="alert">{error} Please try again.</div>}<div ref={bottom}/></div><div className="chat-composer-wrap"><form className="chat-composer" onSubmit={e=>{e.preventDefault();ask(question);}}><input aria-label="Ask Wolf Intelligence" placeholder="Ask about your savings, investments, or virtual risk…" value={question} onChange={e=>setQuestion(e.target.value)} maxLength={2000} disabled={busy}/><Button type="submit" size="icon" disabled={!question.trim()||busy} aria-label="Send question">{busy?<LoaderCircle size={17} className="spin"/>:<Send size={17}/>}</Button></form><p><LockKeyhole size={11}/>Explanations only. Cannot move money or change your limits.</p></div></section><div className="advisor-context"><section className="panel"><PanelTitle title="The context behind the clarity" subtitle="Read from your local portfolio."/><div className="context-stat"><span>Recorded purchases</span><strong>{purchasesOf(state).length}</strong></div><div className="context-stat"><span>Protected savings</span><strong className="positive">{money(b.savings)}</strong></div><div className="context-stat"><span>Virtual budget</span><strong className="purple-text">{money(b.risk)}</strong></div>{scenario&&<div className="context-stat"><span>Selected sports scenario</span><strong>{scenario.event}</strong></div>}<div className="context-stat"><span>Completed scenarios</span><strong>{outcomesOf(state).length}</strong></div><div className="mini-note"><ShieldCheck size={15}/><span>Your API key stays on the server. Only structured portfolio context is sent with your question.</span></div></section><section className="advisor-note"><span className="intelligence-icon"><Leaf size={20}/></span><h3>A guide to understanding.</h3><p>Ask about expected value, probability assumptions, your savings pace, or why an exposure limit exists.</p><p>With no API key, clearly labeled demo explanations use deterministic calculations from your recorded data.</p><Link href="/settings" className="text-link">About your setup<ArrowRight size={14}/></Link></section></div></div></>;
+function Activity({ state, onPurchase }: { state: Portfolio; onPurchase: () => void }) {
+  const [filter, setFilter] = useState<'all' | Row['type']>('all'), [search, setSearch] = useState('');
+  const rows = useMemo(() => [...state.ledger].reverse().filter(e => { const r = describe(e); return (filter === 'all' || r.type === filter) && `${r.title} ${r.detail}`.toLowerCase().includes(search.toLowerCase()); }), [state.ledger, filter, search]);
+  function download() {
+    const quote = (v: string) => `"${v.replaceAll('"', '""')}"`;
+    const csv = ['Date,Type,Description,Amount', ...rows.map(e => { const r = describe(e); return [e.at, r.type, quote(r.title), quote(r.amount)].join(','); })].join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), a = document.createElement('a');
+    a.href = url; a.download = 'wolf-of-claude-street-activity.csv'; a.click(); URL.revokeObjectURL(url);
+  }
+  const b = balances(state);
+  return <>
+    <PageTitle title="Activity" subtitle={`${state.ledger.filter(e => e.kind === 'purchase').length} purchases · ${money(b.roundups)} in spare change saved`}><Button variant="outline" onClick={download}><Download size={15} />Download</Button><Button onClick={onPurchase}><Plus size={16} />Add a purchase</Button></PageTitle>
+    <section className="card">
+      <div className="toolbar">
+        <div className="segmented">{([['all', 'All'], ['purchase', 'Purchases'], ['investment', 'Investments'], ['sports', 'Sports Lab']] as const).map(([key, label]) => <button key={key} type="button" className={filter === key ? 'selected' : ''} aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}</div>
+        <label className="search"><Search size={16} /><input aria-label="Search activity" placeholder="Search" value={search} onChange={e => setSearch(e.target.value)} /></label>
+      </div>
+      <ActivityList entries={rows} />
+      {!rows.length && <Empty title="Nothing found" description={state.ledger.length ? 'Try a different search or filter.' : 'Add a purchase to get started.'} />}
+    </section>
+  </>;
 }
 
-function Settings({state,mutate,notify,onReset,onDemo}:{state:Portfolio;mutate:Mutate;notify:Notify;onReset:()=>void;onDemo:()=>void}){
-  const [allocation,setAllocation]=useState(state.allocation),[limits,setLimits]=useState<Limits>(state.limits),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-  async function save(e:React.FormEvent){e.preventDefault();setError('');setBusy(true);try{await mutate(s=>updateAllocation(updateLimits(s,limits),Math.min(allocation,limits.allocation)));notify('Your guardrails are saved. Any released virtual funds are now protected.');}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
-  const b=balances(state);
-  return <><PageHeading eyebrow="YOUR HABITS. YOUR BOUNDARIES." title="Make room for peace of mind." description="Tune your allocation. Keep your guardrails close."/><div className="settings-layout"><form className="panel settings-form" onSubmit={save}><PanelTitle title="Round-up allocation" subtitle="Decide where new spare change goes." action={<SlidersHorizontal className="positive" size={19}/>}/><AllocationControl allocation={Math.min(allocation,limits.allocation)} max={limits.allocation} onChange={setAllocation}/><div className="allocation-example"><Coffee size={21}/><p>A $4.35 coffee creates <strong>$0.65</strong>: <span className="positive">{money(65-Math.floor(65*Math.min(allocation,limits.allocation)/100))} protected</span> and <span className="purple-text">{money(Math.floor(65*Math.min(allocation,limits.allocation)/100))} virtual</span>.</p></div><p className="field-hint"><LockKeyhole size={13}/>Applies to new purchases. Existing protected savings cannot be reallocated.</p><div className="divider"/><PanelTitle title="Stricter by choice" subtitle="Limits can be tightened within the defaults."/>{([{key:'allocation',title:'Maximum virtual allocation',description:'Share of accumulated round-ups allocated to the simulator.',max:20,min:0,step:1},{key:'exposure',title:'Maximum exposure per scenario',description:'Share of the available virtual budget at the time of a scenario.',max:5,min:0.1,step:0.1},{key:'dailyLoss',title:'Maximum simulated daily loss',description:'Gross loss cap as a share of the day’s starting virtual budget (UTC).',max:10,min:0.1,step:0.1}] as const).map(field=><div className="limit-setting" key={field.key}><label htmlFor={`limit-${field.key}`}><strong>{field.title}</strong><span>{field.description}</span></label><div className="percent-input"><input id={`limit-${field.key}`} aria-label={field.title} type="number" min={field.min} max={field.max} step={field.step} value={limits[field.key]} onChange={e=>{const value=Number(e.target.value);setLimits({...limits,[field.key]:value});if(field.key==='allocation')setAllocation(Math.min(allocation,value));}} required/><span>%</span></div></div>)}<div className="settings-note"><ShieldCheck size={18}/><p>Reducing the allocation cap moves excess available virtual contributions into protected savings through a ledger entry. Protected savings never move in the other direction.</p></div>{error&&<div className="alert alert-error" role="alert">{error}</div>}<Button type="submit" disabled={busy}>{busy?<LoaderCircle size={16} className="spin"/>:<Check size={16}/>}Save allocation & limits</Button></form><div className="settings-side"><section className="panel"><PanelTitle title="Your prototype setup"/><div className="setup-row"><span>Data storage</span><Pill>Browser local</Pill></div><div className="setup-row"><span>Bank connection</span><span>Simulated only</span></div><div className="setup-row"><span>AI connection</span><span>Server API / demo fallback</span></div><div className="setup-row"><span>Scenario execution</span><span>Virtual, immediate settlement</span></div><div className="mini-note"><LockKeyhole size={15}/><span>Server credentials use ANTHROPIC_API_KEY. No real account credentials are collected.</span></div></section><section className="panel demo-controls"><PanelTitle title="A fresh start, anytime" subtitle="Demo data belongs to this browser."/><p>{purchasesOf(state).length} purchases · {outcomesOf(state).length} outcomes · {state.reviews.length} reviews</p><Button variant="outline" className="full-width" onClick={onDemo}><RotateCcw size={15}/>Load Demo Portfolio</Button><button className="reset-button" onClick={onReset}><RotateCcw size={14}/>Reset demo & clear data</button></section><section className="protection-promise"><ShieldCheck size={28}/><h3>Protected means protected.</h3><p>Your {money(b.savings)} in savings is isolated in the ledger. There is no savings-to-simulator transfer function.</p></section></div></div></>;
+function PurchaseForm({ state, mutate, notify, onClose }: { state: Portfolio; mutate: Mutate; notify: Notify; onClose: () => void }) {
+  const [merchant, setMerchant] = useState(''), [amount, setAmount] = useState(''), [category, setCategory] = useState('Food & drink'), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const purchaseId = useRef(id()), { prices } = useMarkets();
+  let cents = 0, preview = { roundupCents: 0, savingsCents: 0, riskCents: 0 };
+  try { cents = parseAmount(amount); preview = purchaseAllocation(state, cents); } catch { cents = 0; }
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); if (busy) return; setBusy(true); setError('');
+    try {
+      let invested = 0;
+      await mutate(s => { const next = addPurchase(s, { id: purchaseId.current, merchant: merchant.trim() || category, category, amount }); const auto = runAutoInvest(next, prices); invested = auto.investedCents; return auto.state; });
+      notify(`${money(preview.roundupCents)} added to your savings.${invested ? ` Auto-invest put ${money(invested)} into the market.` : ''}`);
+      onClose();
+    } catch (err) { setError((err as Error).message); setBusy(false); }
+  }
+  return <form onSubmit={submit}>
+    <DialogTitle>Add a purchase</DialogTitle>
+    <DialogDescription>We’ll round it up to the next dollar and save the change.</DialogDescription>
+    <div className="stack">
+      <label className="field">Amount<span className="money-field money-field-lg"><span>$</span><input aria-label="Purchase amount" inputMode="decimal" placeholder="4.35" value={amount} onChange={e => setAmount(e.target.value)} autoFocus required /></span></label>
+      <label className="field">Where<input value={merchant} onChange={e => setMerchant(e.target.value)} maxLength={80} placeholder="e.g. Corner Coffee" /></label>
+      <label className="field">Category<select value={category} onChange={e => setCategory(e.target.value)}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></label>
+      <div className="preview-box">
+        {cents ? <><div className="preview-main"><span>Spare change</span><strong>{money(preview.roundupCents)}</strong></div>
+          <p>{money(cents)} rounds up to {money(cents + preview.roundupCents)}. {preview.riskCents ? <>{money(preview.savingsCents)} goes to savings and {money(preview.riskCents)} to Sports Lab.</> : preview.roundupCents ? 'All of it goes to savings.' : 'Whole-dollar purchases have no change to save.'}</p></>
+          : <p>Enter an amount to see how much you’ll save.</p>}
+      </div>
+      {error && <div className="notice notice-error" role="alert">{error}</div>}
+      <Button type="submit" className="full-width btn-lg" disabled={!cents || busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}Add purchase</Button>
+    </div>
+  </form>;
 }
 
-function ReviewReport({state}:{state:Portfolio}){const review=state.reviews[0]??generateReview(state);return <div className="review-report"><div className="review-summary"><ShieldCheck size={25}/><strong>{review.summary}</strong></div><div className="review-stats"><div><strong>{review.violations}</strong><span>completed violations</span></div><div><strong>{review.blocked}</strong><span>blocked attempts</span></div><div><strong>100%</strong><span>savings isolated</span></div></div><ul>{review.facts.map((fact,i)=><li key={fact}><Check size={15}/><p>{fact}</p></li>)}</ul><span className="review-date">Recorded {new Date(review.at).toLocaleString('en-US')} · Last 7 days · Simulated activity</span></div>;}
+function HowItWorks({ onStart }: { onStart: () => void }) {
+  return <>
+    <DialogTitle>How it works</DialogTitle>
+    <DialogDescription>Three simple steps. Everything here uses pretend money.</DialogDescription>
+    <ol className="how">
+      <li><span>1</span><div><strong>Round up</strong><p>A $4.35 coffee rounds up to $5.00. The $0.65 of change goes to your savings.</p></div></li>
+      <li><span>2</span><div><strong>Invest</strong><p>Use your savings to buy pieces of funds like the S&P 500 — or let auto-invest do it for you.</p></div></li>
+      <li><span>3</span><div><strong>Optional: Sports Lab</strong><p>A small, separate pretend budget for learning about odds. Your savings are never used there.</p></div></li>
+    </ol>
+    <Button className="full-width" onClick={onStart}>Add a purchase</Button>
+  </>;
+}
+
+function Settings({ state, mutate, notify, onReset }: { state: Portfolio; mutate: Mutate; notify: Notify; onReset: (kind: 'demo' | 'empty') => void }) {
+  const { account, rename, logOut, remove } = useAccount();
+  const [name, setName] = useState(account.name), [split, setSplit] = useState(state.allocation), [limits, setLimits] = useState<Limits>(state.limits), [error, setError] = useState(''), [deleteOpen, setDeleteOpen] = useState(false);
+  const sportsCents = Math.floor(65 * split / 100);
+  async function saveSplit() { try { await mutate(s => updateAllocation(s, Math.min(split, s.limits.allocation))); notify('Saved.'); } catch (e) { notify((e as Error).message); } }
+  async function saveLimits(e: React.FormEvent) { e.preventDefault(); setError(''); try { await mutate(s => updateAllocation(updateLimits(s, limits), Math.min(s.allocation, limits.allocation))); setSplit(Math.min(split, limits.allocation)); notify('Sports Lab limits saved.'); } catch (err) { setError((err as Error).message); } }
+  return <>
+    <PageTitle title="Settings" />
+    <div className="settings">
+      <Card title="Your account">
+        <div className="account-row"><span className="avatar avatar-lg">{initials(account.name)}</span><div><strong>{account.name}</strong><small>{account.email}</small><small>Member since {new Date(account.createdAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</small></div></div>
+        <form className="inline-form" onSubmit={e => { e.preventDefault(); try { rename(name); notify('Name updated.'); } catch (err) { notify((err as Error).message); } }}>
+          <label className="field">Name<input value={name} onChange={e => setName(e.target.value)} maxLength={60} /></label>
+          <Button type="submit" variant="outline" disabled={!name.trim() || name.trim() === account.name}>Save</Button>
+        </form>
+        <div className="button-row"><Button variant="outline" onClick={logOut}><LogOut size={15} />Log out</Button><button type="button" className="link-btn danger" onClick={() => setDeleteOpen(true)}>Delete account</button></div>
+        <p className="muted small">Your account is saved in this browser on this device only.</p>
+      </Card>
+
+      <Card title="Where your spare change goes">
+        <p className="muted">Most of your change goes to savings. You can send a small part to Sports Lab, a pretend budget for learning about odds.</p>
+        <div className="slider-field">
+          <div className="slider-labels"><span><i className="dot seg-savings" />Savings <strong>{100 - split}%</strong></span><span><i className="dot seg-sports" />Sports Lab <strong>{split}%</strong></span></div>
+          <input type="range" min={0} max={state.limits.allocation} value={Math.min(split, state.limits.allocation)} onChange={e => setSplit(Number(e.target.value))} aria-label="Share of spare change for Sports Lab" />
+          <p className="muted small">Example: a $4.35 coffee saves $0.65 — {money(65 - sportsCents)} to savings, {money(sportsCents)} to Sports Lab.</p>
+        </div>
+        <Button onClick={saveSplit} disabled={split === state.allocation}>Save</Button>
+      </Card>
+
+      <Card title="Your data">
+        <p className="muted">{state.ledger.filter(e => e.kind === 'purchase').length} purchases · {state.ledger.filter(e => e.kind === 'trade').length} trades</p>
+        <div className="button-row"><Button variant="outline" onClick={() => onReset('demo')}><RotateCcw size={15} />Load sample data</Button><Button variant="outline" className="btn-danger-outline" onClick={() => onReset('empty')}>Start over</Button></div>
+      </Card>
+
+      <Card title="Sports Lab limits">
+        <details className="advanced"><summary>Show advanced limits</summary>
+          <form className="stack" onSubmit={saveLimits}>
+            {([{ key: 'allocation', title: 'Most spare change Sports Lab can get', max: 20, min: 0, step: 1 }, { key: 'exposure', title: 'Most you can use on one game', max: 5, min: 0.1, step: 0.1 }, { key: 'dailyLoss', title: 'Most you can lose in a day', max: 10, min: 0.1, step: 0.1 }] as const).map(f => <label key={f.key} className="field field-row">{f.title}<span className="percent-field"><input type="number" aria-label={f.title} min={f.min} max={f.max} step={f.step} value={limits[f.key]} onChange={e => setLimits({ ...limits, [f.key]: Number(e.target.value) })} required /><span>%</span></span></label>)}
+            {error && <div className="notice notice-error" role="alert">{error}</div>}
+            <Button type="submit" variant="outline">Save limits</Button>
+          </form>
+        </details>
+        <p className="muted small"><ShieldCheck size={14} />Your savings and investments can never be used in Sports Lab.</p>
+      </Card>
+    </div>
+    <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}><DialogContent>
+      <DialogTitle>Delete your account?</DialogTitle>
+      <DialogDescription>This permanently removes your login and all of your data from this device. It can’t be undone.</DialogDescription>
+      <div className="dialog-buttons"><Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button><Button className="btn-danger" onClick={remove}>Delete account</Button></div>
+    </DialogContent></Dialog>
+  </>;
+}
+
+function ReviewReport({ state }: { state: Portfolio }) {
+  const review = state.reviews[0] ?? generateReview(state);
+  return <div className="review"><p className="review-summary"><ShieldCheck size={20} />{review.summary}</p><ul>{review.facts.map(fact => <li key={fact}><Check size={15} />{fact}</li>)}</ul><small className="muted">Recorded {new Date(review.at).toLocaleString('en-US')}</small></div>;
+}
