@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dial
 import { Card, Empty, PageTitle, WolfMark, initials, signedMoney, signedPercent } from './ui/kit';
 import { ActivityChart } from './charts';
 import { Ask } from './ask';
+import { EarthHero } from './earth-hero';
 import { Invest } from './invest';
 import { useProfile } from './account-provider';
 import { useMarkets } from './market-provider';
@@ -85,7 +86,8 @@ function Home({ state, mutate, notify, onPurchase, onHelp }: { state: Portfolio;
   const parts = [{ key: 'savings', label: 'Savings', value: b.savings }, { key: 'invested', label: 'Investments', value: pv.valueCents }, { key: 'sports', label: 'Sports Lab', value: b.risk }];
   const rule = state.autoInvest;
   return <>
-    <PageTitle title={name ? `${greeting}, ${name.split(' ')[0]}` : greeting} />
+    <EarthHero greeting={name ? `${greeting}, ${name.split(' ')[0]}.` : `${greeting}.`} />
+    <PageTitle title="Your money" />
     <section className="card hero">
       <div className="hero-top">
         <div><span className="label">Total balance</span><strong className="hero-amount">{money(total)}</strong>
