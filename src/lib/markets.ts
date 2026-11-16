@@ -37,7 +37,7 @@ export const STRATEGIES = [
   { key: 'steady', name: 'Steady Pack', description: 'Broad market with a bond cushion.', mix: [{ symbol: 'SPY', weight: 60 }, { symbol: 'BND', weight: 25 }, { symbol: 'VXUS', weight: 15 }] },
   { key: 'classic', name: 'The Classic', description: 'All-in on the S&P 500.', mix: [{ symbol: 'SPY', weight: 100 }] },
   { key: 'balanced', name: 'Balanced Pack', description: 'US market, tech tilt, a little global.', mix: [{ symbol: 'SPY', weight: 50 }, { symbol: 'QQQ', weight: 30 }, { symbol: 'VXUS', weight: 20 }] },
-  { key: 'alpha', name: 'Alpha Wolf', description: 'Growth-heavy: tech index plus big names.', mix: [{ symbol: 'QQQ', weight: 40 }, { symbol: 'SPY', weight: 30 }, { symbol: 'NVDA', weight: 15 }, { symbol: 'MSFT', weight: 15 }] },
+  { key: 'alpha', name: 'Go-Getter', description: 'Growth-heavy: tech index plus big names.', mix: [{ symbol: 'QQQ', weight: 40 }, { symbol: 'SPY', weight: 30 }, { symbol: 'NVDA', weight: 15 }, { symbol: 'MSFT', weight: 15 }] },
 ] as const;
 
 // Illustrative long-run annual return assumptions for the growth calculator.

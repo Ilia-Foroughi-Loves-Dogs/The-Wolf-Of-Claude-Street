@@ -4,10 +4,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, CircleHelp, Coffee, Download, Home as HomeIcon, LineChart, LoaderCircle, MessageCircleQuestion, PiggyBank, Plus, Repeat, RotateCcw, Search, Settings as SettingsIcon, ShieldCheck, ShoppingBag, ShoppingCart, Target, Trophy, X, type LucideIcon } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
-import { Card, Empty, PageTitle, WolfMark, initials, signedMoney, signedPercent } from './ui/kit';
+import { Card, Empty, PageTitle, LogoMark, initials, signedMoney, signedPercent } from './ui/kit';
 import { ActivityChart } from './charts';
 import { Ask } from './ask';
-import { EarthHero } from './earth-hero';
+import { CoinHero } from './coin-hero';
 import { Invest } from './invest';
 import { useProfile } from './account-provider';
 import { useMarkets } from './market-provider';
@@ -39,7 +39,7 @@ export function Application({ view }: { view: string }) {
 
   return <div className="app">
     <header className="topnav">
-      <Link href="/" className="logo"><span className="logo-mark"><WolfMark size={20} /></span>Wolf of Claude Street</Link>
+      <Link href="/" className="logo"><span className="logo-mark"><LogoMark size={20} /></span>Upcent</Link>
       <nav className="topnav-links" aria-label="Main">{NAV.filter(n => n.key !== 'settings').map(({ key, label, path }) => <Link key={key} href={path} className={view === key ? 'active' : ''} aria-current={view === key ? 'page' : undefined}>{label === 'Ask a question' ? 'Ask' : label}</Link>)}</nav>
       <div className="topnav-right">
         <button type="button" className="icon-btn topnav-desktop" onClick={() => setHelpOpen(true)} aria-label="How it works" title="How it works"><CircleHelp size={20} /></button>
@@ -86,7 +86,7 @@ function Home({ state, mutate, notify, onPurchase, onHelp }: { state: Portfolio;
   const parts = [{ key: 'savings', label: 'Savings', value: b.savings }, { key: 'invested', label: 'Investments', value: pv.valueCents }, { key: 'sports', label: 'Sports Lab', value: b.risk }];
   const rule = state.autoInvest;
   return <>
-    <EarthHero greeting={name ? `${greeting}, ${name.split(' ')[0]}.` : `${greeting}.`} />
+    <CoinHero greeting={name ? `${greeting}, ${name.split(' ')[0]}.` : `${greeting}.`} />
     <PageTitle title="Your money" />
     <section className="card hero">
       <div className="hero-top">
@@ -170,7 +170,7 @@ function Activity({ state, onPurchase }: { state: Portfolio; onPurchase: () => v
     const quote = (v: string) => `"${v.replaceAll('"', '""')}"`;
     const csv = ['Date,Type,Description,Amount', ...rows.map(e => { const r = describe(e); return [e.at, r.type, quote(r.title), quote(r.amount)].join(','); })].join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), a = document.createElement('a');
-    a.href = url; a.download = 'wolf-of-claude-street-activity.csv'; a.click(); URL.revokeObjectURL(url);
+    a.href = url; a.download = 'upcent-activity.csv'; a.click(); URL.revokeObjectURL(url);
   }
   const b = balances(state);
   return <>

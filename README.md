@@ -1,4 +1,4 @@
-# Wolf of Claude Street · RoundUp AI
+# Upcent
 
 A working, savings-first fintech prototype. Simulated purchase round-ups build protected savings while a separate virtual budget lets you explore probability, expected value, and risk limits. All funds and generated outcomes are simulated. Sports schedules come from the ESPN public scoreboard; probabilities and multipliers are user-selected hypothetical assumptions. No actual wagering, investment execution, or bank connections.
 

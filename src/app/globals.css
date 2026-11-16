@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Wolf of Claude Street: a plain, light, easy-to-read theme. */
+/* Upcent: a plain, light, easy-to-read theme. */
 :root {
   color-scheme: light;
   --bg: #f5f6f8; --card: #ffffff; --border: #e5e7eb; --border-strong: #d1d5db;
@@ -440,21 +440,21 @@ input[type=checkbox] { accent-color:#1d4ed8; width:13px; height:13px; margin:2px
 .guardrails strong { display:flex; gap:4px; align-items:center; font-size:13.0px; font-weight:500; color:#374151; }
 .guardrails>p { font-size:11.7px; line-height:1.8; color:#6b7280; margin:3px 23px 0; }
 
-/* Home: scroll-driven Earth scene */
-.earth-hero { --p: 0; --nav: 72px; position: relative; height: 280vh; margin: -32px calc(50% - 50vw) 40px; background: #000; color: #fff; }
-.earth-stage { position: sticky; top: var(--nav); height: calc(100vh - var(--nav)); height: calc(100svh - var(--nav)); overflow: hidden; display: grid; place-items: center; }
-.earth-stage > * { grid-area: 1 / 1; }
-.earth-greeting { align-self: start; margin-top: 11vh; text-align: center; padding: 0 20px; z-index: 2; opacity: calc(1 - var(--p) * 4); transform: translateY(calc(var(--p) * -120px)) scale(calc(1 - var(--p) * .4)); }
-.earth-greeting h1 { font-size: clamp(36px, 7vw, 80px); font-weight: 700; letter-spacing: -.035em; line-height: 1.05; }
-.earth-greeting p { margin-top: 14px; font-size: clamp(17px, 2vw, 22px); color: #a1a1aa; }
-.earth-globe { width: min(62vmin, 600px); aspect-ratio: 1; margin-top: 18vh; z-index: 1; will-change: transform; transform: perspective(1400px) translateY(calc((1 - min(1, var(--p) * 1.6)) * 22vh - 18vh * min(1, var(--p) * 1.6))) rotateX(calc((1 - min(1, var(--p) * 1.6)) * 38deg)) rotate(calc(var(--p) * 24deg)) scale(calc(.62 + var(--p) * 1.25)); filter: brightness(calc(.75 + var(--p) * .35)); }
-.earth-globe img { width: 100%; height: 100%; object-fit: cover; display: block; -webkit-mask-image: radial-gradient(circle closest-side, #000 88%, transparent 92%); mask-image: radial-gradient(circle closest-side, #000 88%, transparent 92%); }
-.earth-glow { width: min(80vmin, 760px); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, #3b82f655 0%, #2563eb22 40%, transparent 70%); opacity: clamp(0, calc(var(--p) * 2.5), 1); transform: scale(calc(.8 + var(--p) * 1.4)); }
-.earth-caption { align-self: end; margin-bottom: 12vh; text-align: center; z-index: 2; font-size: clamp(30px, 5.5vw, 64px); font-weight: 700; letter-spacing: -.03em; line-height: 1.08; text-shadow: 0 2px 30px #000c; opacity: clamp(0, calc((var(--p) - .6) * 3.5), 1); transform: translateY(calc((1 - clamp(0, calc((var(--p) - .6) * 3.5), 1)) * 40px)); }
-.earth-hint { align-self: end; margin-bottom: 28px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #a1a1aa; opacity: clamp(0, calc(1 - var(--p) * 10), 1); animation: hint 1.8s ease-in-out infinite; }
+/* Home: scroll-driven coin rain */
+.coin-hero { --p: 0; --nav: 72px; position: relative; height: 300vh; margin: -32px calc(50% - 50vw) 40px; background: radial-gradient(ellipse at 50% 30%, #1e2a4a 0%, #0b1020 70%); color: #fff; }
+.coin-stage { position: sticky; top: var(--nav); height: calc(100vh - var(--nav)); height: calc(100svh - var(--nav)); overflow: hidden; display: grid; place-items: center; }
+.coin-stage > * { grid-area: 1 / 1; }
+.coin-canvas { width: 100%; height: 100%; display: block; }
+.coin-greeting { align-self: start; margin-top: 12vh; text-align: center; padding: 0 20px; z-index: 2; opacity: calc(1 - var(--p) * 4); transform: translateY(calc(var(--p) * -120px)) scale(calc(1 - var(--p) * .4)); }
+.coin-greeting h1 { font-size: clamp(36px, 7vw, 80px); font-weight: 700; letter-spacing: -.035em; line-height: 1.05; }
+.coin-greeting p { margin-top: 14px; font-size: clamp(17px, 2vw, 22px); color: #a5b4cf; }
+.coin-caption { z-index: 2; text-align: center; padding: 28px 32px; max-width: 640px; margin: 0 20px; border-radius: 24px; background: #0b1020e8; box-shadow: 0 20px 60px #0009; backdrop-filter: blur(8px); opacity: clamp(0, calc((var(--p) - .62) * 3.5), 1); transform: translateY(calc((1 - clamp(0, calc((var(--p) - .62) * 3.5), 1)) * 40px)); }
+.coin-caption h2 { font-size: clamp(32px, 5.5vw, 64px); font-weight: 700; letter-spacing: -.03em; line-height: 1.08; background: linear-gradient(180deg, #fff3b0, #f8c740); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.coin-caption p { margin-top: 10px; font-size: clamp(16px, 1.8vw, 20px); color: #cbd5e1; }
+.coin-hint { align-self: end; margin-bottom: 28px; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #a5b4cf; opacity: clamp(0, calc(1 - var(--p) * 10), 1); animation: hint 1.8s ease-in-out infinite; }
 @keyframes hint { 50% { transform: translateY(6px); } }
-@media (max-width: 860px) { .earth-hero { --nav: 60px; height: 240vh; margin-top: -20px; } .earth-globe { width: 86vmin; } .earth-hint { margin-bottom: calc(96px + env(safe-area-inset-bottom)); } .earth-caption { margin-bottom: calc(110px + env(safe-area-inset-bottom)); } }
-@media (prefers-reduced-motion: reduce) { .earth-hero { --p: .5; height: auto; } .earth-stage { position: relative; top: 0; } .earth-greeting, .earth-caption { opacity: 1; transform: none; } .earth-hint { display: none; } }
+@media (max-width: 860px) { .coin-hero { --nav: 60px; height: 260vh; margin-top: -20px; } .coin-hint { margin-bottom: calc(96px + env(safe-area-inset-bottom)); } }
+@media (prefers-reduced-motion: reduce) { .coin-hero { height: auto; } .coin-stage { position: relative; top: 0; } .coin-greeting { opacity: 1; transform: none; } .coin-caption { opacity: 1; transform: none; align-self: end; margin-bottom: 40px; } .coin-hint { display: none; } }
 
 /* Sports Lab (simple) */
 .sl-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 16px 20px; }
