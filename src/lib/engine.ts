@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_CHANCE, MIN_CHANCE, fairMultiplier } from './odds';
 
 export const STORAGE_KEY = 'roundup-ai-ledger-v1';
 export const money = (cents: number) => new Intl.NumberFormat('en-US', { style:'currency', currency:'USD' }).format(cents / 100);
@@ -12,14 +13,22 @@ export const PROBABILITY_OPTIONS = [10,20,30,40,50,60,70,80,90] as const;
 const chosenProbability = z.number().refine(p => PROBABILITY_OPTIONS.some(option => p===option/100), 'Choose 10%–90% in steps of 10%.');
 export const scenarioLegSchema = z.object({
   eventId:z.string().max(100), event:z.string().min(1).max(200), teamId:z.string().max(50), team:z.string().min(1).max(100),
-  league:z.string().max(100), startsAt:timestamp, status:z.string().max(40), source:z.literal('ESPN public scoreboard'),
-  probability:chosenProbability, multiplier:z.number().min(1.01).max(100),
+  league:z.string().max(100), startsAt:timestamp, status:z.string().max(40), source:z.enum(['ESPN public scoreboard','Prediction markets']),
+  // ESPN legs carry the user's own 10%-step guess; market legs carry the prediction-market chance.
+  probability:z.number().gt(0).lt(1), multiplier:z.number().min(1.01).max(100),
+  odds:z.object({ polymarket:z.number().optional(), kalshi:z.number().optional() }).optional(),
+  // Where to read the real result: Polymarket event id + outcome label, Kalshi market ticker.
+  settle:z.object({ polymarketEvent:z.string().regex(/^\d{1,12}$/).optional(), polymarketOutcome:z.string().max(120).optional(), kalshiMarket:z.string().regex(/^[A-Z0-9.\-]{3,100}$/).optional() }).optional(),
 });
+const marketLeg=(leg:{source:string})=>leg.source==='Prediction markets';
 // Historical records retain their original assumptions. New executions are
 // checked below, so portfolios saved before the upgrade remain readable.
 export const scenarioSchema = z.object({ event:z.string().trim().min(1).max(240), probability:z.number().gt(0).lt(1), multiplier:z.number().min(1.01).max(1_000_000), stakeCents:cents.min(1), combined:z.boolean(), secondProbability:z.number().gt(0).lt(1), independent:z.boolean(), legs:z.array(scenarioLegSchema).min(1).max(8).optional(), combinedProbability:chosenProbability.optional(), calculationVersion:z.literal(2).optional() });
 export type Scenario = z.infer<typeof scenarioSchema>;
-const outcomeSchema = z.object({ kind:z.literal('outcome'), id:z.string(), at:timestamp, scenario:scenarioSchema, won:z.boolean(), payoutCents:cents, netCents:z.number().int(), limits:limitsSchema, availableBefore:cents, dayStartCents:cents, lossBeforeCents:cents });
+const outcomeSchema = z.object({ kind:z.literal('outcome'), id:z.string(), at:timestamp, scenario:scenarioSchema, won:z.boolean(), payoutCents:cents, netCents:z.number().int(), limits:limitsSchema, availableBefore:cents, dayStartCents:cents, lossBeforeCents:cents , pickId:z.string().optional(), void:z.boolean().optional() });
+// A pick on a real upcoming game: the stake leaves the practice budget now and
+// an outcome entry (with pickId) settles it once the game's real result is known.
+const pickSchema = z.object({ kind:z.literal('pick'), id:z.string(), at:timestamp, scenario:scenarioSchema, limits:limitsSchema, availableBefore:cents, dayStartCents:cents, lossBeforeCents:cents });
 const transferSchema = z.object({kind:z.literal('protect'), id:z.string(), at:timestamp, amountCents:cents.min(1), reason:z.string()});
 // Simulated investing: protected savings buy fractional shares at a quoted price.
 // Sells return proceeds to protected savings. Nothing touches the virtual sports budget.
@@ -33,11 +42,12 @@ export type AutoInvest = z.infer<typeof autoInvestSchema>;
 export const defaultAutoInvest = (): AutoInvest => ({ enabled:false, thresholdCents:1000, percent:50, mix:[{symbol:'SPY',name:'S&P 500 ETF',weight:70},{symbol:'QQQ',name:'Nasdaq-100 ETF',weight:30}] });
 export type Purchase = z.infer<typeof purchaseSchema>;
 export type Outcome = z.infer<typeof outcomeSchema>;
+export type SportsPick = z.infer<typeof pickSchema>;
 export type Trade = z.infer<typeof tradeSchema>;
-export type LedgerEntry = Purchase | Outcome | Trade | z.infer<typeof transferSchema>;
+export type LedgerEntry = Purchase | Outcome | SportsPick | Trade | z.infer<typeof transferSchema>;
 const reviewSchema = z.object({id:z.string(),at:timestamp,from:timestamp,summary:z.string(),facts:z.array(z.string()),violations:z.number().int().min(0),blocked:z.number().int().min(0)});
 export type Review = z.infer<typeof reviewSchema>;
-const stateSchema = z.object({version:z.literal(1), ledger:z.array(z.discriminatedUnion('kind',[purchaseSchema,outcomeSchema,transferSchema,tradeSchema])).max(10000), limits:limitsSchema, autoInvest:autoInvestSchema.default(defaultAutoInvest), allocation:z.number().int().min(0).max(20), goal:z.object({name:z.string().min(1).max(60),targetCents:cents.min(100)}),dayBudgets:z.array(z.object({day:z.string(),startCents:cents})).max(10000),blocked:z.array(z.object({id:z.string(),at:timestamp,reason:z.string(),stakeCents:cents})).max(10000),reviews:z.array(reviewSchema).max(1000)});
+const stateSchema = z.object({version:z.literal(1), ledger:z.array(z.discriminatedUnion('kind',[purchaseSchema,outcomeSchema,pickSchema,transferSchema,tradeSchema])).max(10000), limits:limitsSchema, autoInvest:autoInvestSchema.default(defaultAutoInvest), allocation:z.number().int().min(0).max(20), goal:z.object({name:z.string().min(1).max(60),targetCents:cents.min(100)}),dayBudgets:z.array(z.object({day:z.string(),startCents:cents})).max(10000),blocked:z.array(z.object({id:z.string(),at:timestamp,reason:z.string(),stakeCents:cents})).max(10000),reviews:z.array(reviewSchema).max(1000)});
 export type Portfolio = z.infer<typeof stateSchema>;
 export const emptyPortfolio = ():Portfolio => ({version:1,ledger:[],limits:{allocation:20,exposure:5,dailyLoss:10},autoInvest:defaultAutoInvest(),allocation:20,goal:{name:'A little peace of mind',targetCents:5000},dayBudgets:[],blocked:[],reviews:[]});
 
@@ -54,7 +64,8 @@ export function balances(state:Pick<Portfolio,'ledger'>) {
   const positions=new Map<string,{shares:number;costCents:number}>();
   for (const entry of state.ledger) {
     if(entry.kind==='purchase'){savings+=entry.savingsCents;risk+=entry.riskCents;roundups+=entry.roundupCents;funding+=entry.riskCents;spent+=entry.amountCents;}
-    if(entry.kind==='outcome'){risk+=entry.netCents;performance+=entry.netCents;}
+    if(entry.kind==='outcome'){risk+=entry.pickId?entry.payoutCents:entry.netCents;performance+=entry.netCents;}
+    if(entry.kind==='pick'){risk-=entry.scenario.stakeCents;}
     if(entry.kind==='protect'){risk-=entry.amountCents;savings+=entry.amountCents;funding-=entry.amountCents;}
     if(entry.kind==='trade'){
       const position=positions.get(entry.symbol)??{shares:0,costCents:0};
@@ -192,14 +203,33 @@ export function riskStatus(state:Portfolio,at=new Date().toISOString()) {
   const day=dayKey(at), b=balances(state);
   const before=balances({ledger:state.ledger.filter(e=>e.at<`${day}T00:00:00.000Z`)}).risk;
   const start=state.dayBudgets.find(d=>d.day===day)?.startCents??(before>0?before:b.risk);
-  const lost=state.ledger.filter((e):e is Outcome=>e.kind==='outcome'&&dayKey(e.at)===day).reduce((n,e)=>n+Math.max(0,-e.netCents),0);
+  // Instant outcomes count on their day; a real-game pick counts on the day it was placed,
+  // at its full stake until it settles (it could still lose all of it).
+  const settledBy=new Map(state.ledger.flatMap(e=>e.kind==='outcome'&&e.pickId?[[e.pickId,e] as const]:[]));
+  const lost=state.ledger.reduce((n,e)=>{
+    if(dayKey(e.at)!==day) return n;
+    if(e.kind==='outcome'&&!e.pickId) return n+Math.max(0,-e.netCents);
+    if(e.kind==='pick'){const settled=settledBy.get(e.id);return n+(settled?Math.max(0,-settled.netCents):e.scenario.stakeCents);}
+    return n;
+  },0);
   const exposure=Math.floor(b.risk*state.limits.exposure/100), dailyCap=Math.floor(start*state.limits.dailyLoss/100), remaining=Math.max(0,dailyCap-lost);
   return {day,start,lost,exposure,dailyCap,remaining,maxStake:Math.max(0,Math.min(b.risk,exposure,remaining))};
 }
 export function scenarioError(state:Portfolio,scenario:Scenario,at=new Date().toISOString()):string|null {
   const parsed=scenarioSchema.safeParse(scenario);
   if(!parsed.success) return 'Choose a game, probabilities from 10%–90% in steps of 10%, multipliers from 1.01–100 per game, and at least $0.01.';
-  if(!chosenProbability.safeParse(scenario.probability).success||!chosenProbability.safeParse(scenario.secondProbability).success) return 'Choose probabilities from 10%–90% in steps of exactly 10%.';
+  const fromMarkets=!!scenario.legs?.length&&scenario.legs.every(marketLeg);
+  if(fromMarkets){
+    for(const leg of scenario.legs!){
+      if(leg.probability<MIN_CHANCE||leg.probability>MAX_CHANCE) return 'This game’s market odds are too lopsided to offer. Pick another game.';
+      if(Math.abs(leg.multiplier-fairMultiplier(leg.probability))>1e-9) return 'The payout must match the market odds.';
+      if(!(Date.parse(leg.startsAt)>Date.parse(at))) return 'This game has already started. Pick an upcoming game.';
+    }
+  } else {
+    if(scenario.legs?.some(marketLeg)) return 'Mixing market odds with your own guesses is not supported.';
+    if(scenario.legs?.some(leg=>!chosenProbability.safeParse(leg.probability).success)) return 'Choose probabilities from 10%–90% in steps of exactly 10%.';
+    if(!chosenProbability.safeParse(scenario.probability).success||!chosenProbability.safeParse(scenario.secondProbability).success) return 'Choose probabilities from 10%–90% in steps of exactly 10%.';
+  }
   if(scenario.legs){
     if(scenario.combined!==(scenario.legs.length>1)||new Set(scenario.legs.map(leg=>leg.eventId)).size!==scenario.legs.length) return 'Select different games for a combined scenario.';
     if(scenario.probability!==scenario.legs[0].probability||Math.abs(scenario.multiplier-effectiveMultiplier(scenario))>1e-8) return 'Scenario totals must match the selected games.';
@@ -227,6 +257,28 @@ export function simulate(state:Portfolio,scenario:Scenario,random=()=>crypto.get
   const outcome:Outcome={kind:'outcome',id:id(),at,scenario:{...scenario,calculationVersion:2},won,payoutCents:payout,netCents:payout-scenario.stakeCents,limits:{...state.limits},availableBefore:balances(state).risk,dayStartCents:r.start,lossBeforeCents:r.lost};
   return {state:{...opened,ledger:[...opened.ledger,outcome]},outcome};
 }
+export function pendingPicks(state:Pick<Portfolio,'ledger'>):SportsPick[] {
+  const settled=new Set(state.ledger.flatMap(e=>e.kind==='outcome'&&e.pickId?[e.pickId]:[]));
+  return state.ledger.filter((e):e is SportsPick=>e.kind==='pick'&&!settled.has(e.id));
+}
+/** Place a pick on a real upcoming game; it stays pending until settlePick records the real result. */
+export function placePick(state:Portfolio,scenario:Scenario,at=new Date().toISOString()):{state:Portfolio;error?:string;pick?:SportsPick} {
+  const r=riskStatus(state,at);
+  const opened={...state,dayBudgets:state.dayBudgets.some(d=>d.day===r.day)?state.dayBudgets:[...state.dayBudgets,{day:r.day,startCents:r.start}]};
+  const error=scenario.legs?.length!==1||!scenario.legs.every(marketLeg)?'Pick one upcoming game with market odds.':scenarioError(opened,scenario,at);
+  if(error) return {state:{...opened,blocked:[...opened.blocked,{id:id(),at,reason:error,stakeCents:Number.isSafeInteger(scenario.stakeCents)&&scenario.stakeCents>=0?scenario.stakeCents:0}]},error};
+  const pick:SportsPick={kind:'pick',id:id(),at,scenario:{...scenario,calculationVersion:2},limits:{...state.limits},availableBefore:balances(state).risk,dayStartCents:r.start,lossBeforeCents:r.lost};
+  return {state:{...opened,ledger:[...opened.ledger,pick]},pick};
+}
+export type PickResult='won'|'lost'|'void';
+/** Record the real result of a pending pick: a win pays the market payout, a void (canceled game) refunds the stake. */
+export function settlePick(state:Portfolio,pickId:string,result:PickResult,at=new Date().toISOString()):Portfolio {
+  const pick=pendingPicks(state).find(p=>p.id===pickId);
+  if(!pick) return state;
+  const stake=pick.scenario.stakeCents, payout=result==='won'?scenarioMetrics(pick.scenario).payout:result==='void'?stake:0;
+  const outcome:Outcome={kind:'outcome',id:id(),at,scenario:pick.scenario,won:result==='won',payoutCents:payout,netCents:payout-stake,limits:pick.limits,availableBefore:pick.availableBefore,dayStartCents:pick.dayStartCents,lossBeforeCents:pick.lossBeforeCents,pickId,...(result==='void'?{void:true}:{})};
+  return {...state,ledger:[...state.ledger,outcome]};
+}
 export function generateReview(state:Portfolio,at=new Date().toISOString()):Review {
   const from=new Date(new Date(at).getTime()-7*86400000).toISOString(), b=balances(state);
   const outcomes=state.ledger.filter((e):e is Outcome=>e.kind==='outcome'&&e.at>=from&&e.at<=at);
@@ -246,7 +298,16 @@ export function loadPortfolio(raw:string):Portfolio {
     if(seen.has(entry.id)) throw new Error('Duplicate ledger entry.');
     seen.add(entry.id);
     if(entry.kind==='purchase'&&(roundUp(entry.amountCents)!==entry.roundupCents||entry.savingsCents+entry.riskCents!==entry.roundupCents||entry.riskCents>Math.floor(entry.roundupCents*entry.allocation/100))) throw new Error('Invalid purchase allocation.');
-    if(entry.kind==='outcome'){
+    if(entry.kind==='pick'){
+      const b=balances(running), leg=entry.scenario.legs?.[0];
+      if(entry.scenario.legs?.length!==1||!leg||!marketLeg(leg)||Math.abs(leg.multiplier-fairMultiplier(leg.probability))>1e-9||entry.availableBefore!==b.risk||entry.scenario.stakeCents>b.risk||entry.scenario.stakeCents>Math.floor(b.risk*entry.limits.exposure/100)||entry.lossBeforeCents+entry.scenario.stakeCents>Math.floor(entry.dayStartCents*entry.limits.dailyLoss/100)) throw new Error('Invalid sports pick.');
+    }
+    if(entry.kind==='outcome'&&entry.pickId){
+      const pick=pendingPicks(running).find(p=>p.id===entry.pickId), stake=entry.scenario.stakeCents;
+      const expected=entry.void?stake:entry.won?scenarioMetrics(entry.scenario).payout:0;
+      if(!pick||JSON.stringify(pick.scenario)!==JSON.stringify(entry.scenario)||(entry.void&&entry.won)||entry.payoutCents!==expected||entry.netCents!==expected-stake) throw new Error('Invalid pick settlement.');
+    }
+    else if(entry.kind==='outcome'){
       const expected=entry.won?(entry.scenario.calculationVersion===2||entry.scenario.legs?scenarioMetrics(entry.scenario).payout:Math.round(entry.scenario.stakeCents*entry.scenario.multiplier)):0;
       const b=balances(running);
       if(entry.netCents!==expected-entry.scenario.stakeCents||entry.payoutCents!==expected||entry.availableBefore!==b.risk||entry.scenario.stakeCents>b.risk||entry.scenario.stakeCents>Math.floor(b.risk*entry.limits.exposure/100)||entry.lossBeforeCents+entry.scenario.stakeCents>Math.floor(entry.dayStartCents*entry.limits.dailyLoss/100)||effectiveProbability(entry.scenario)===null) throw new Error('Invalid simulation ledger.');

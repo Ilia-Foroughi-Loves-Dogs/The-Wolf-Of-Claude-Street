@@ -1,6 +1,6 @@
 "use client";
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, CircleHelp, Coffee, Download, Home as HomeIcon, LineChart, LoaderCircle, MessageCircleQuestion, PiggyBank, Plus, Repeat, RotateCcw, Search, Settings as SettingsIcon, ShieldCheck, ShoppingBag, ShoppingCart, Target, Trophy, X, type LucideIcon } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
@@ -10,6 +10,7 @@ import { Ask } from './ask';
 import { CoinHero } from './coin-hero';
 import { Invest } from './invest';
 import { useProfile } from './account-provider';
+import { usePickSettlement } from './use-pick-settlement';
 import { useMarkets } from './market-provider';
 import { usePortfolio } from './portfolio-provider';
 import { SportsSimulator } from './sports-simulator';
@@ -34,7 +35,8 @@ export function Application({ view }: { view: string }) {
   const { state, ready, storageError, mutate, activeScenario, setActiveScenario } = usePortfolio();
   const [purchaseOpen, setPurchaseOpen] = useState(false), [helpOpen, setHelpOpen] = useState(false), [reviewOpen, setReviewOpen] = useState(false), [reset, setReset] = useState<'demo' | 'empty' | null>(null), [notice, setNotice] = useState('');
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 6000); return () => clearTimeout(timer); }, [notice]);
-  const notify: Notify = message => setNotice(message);
+  const notify: Notify = useCallback((message: string) => setNotice(message), []);
+  usePickSettlement(state, ready, mutate, notify);
   async function review() { try { await mutate(s => saveReview(s)); setReviewOpen(true); } catch (e) { notify((e as Error).message); } }
 
   return <div className="app">
@@ -156,6 +158,8 @@ type Row = { id: string; type: 'purchase' | 'investment' | 'sports' | 'transfer'
 function describe(entry: LedgerEntry): Row {
   if (entry.kind === 'purchase') return { id: entry.id, type: 'purchase', icon: entry.category === 'Food & drink' ? Coffee : entry.category === 'Groceries' ? ShoppingCart : ShoppingBag, title: entry.merchant, detail: `${entry.category} · ${shortDate(entry.at)}`, amount: money(entry.amountCents), secondary: entry.roundupCents ? `+${money(entry.roundupCents)} saved` : 'No change to round up' };
   if (entry.kind === 'trade') return { id: entry.id, type: 'investment', icon: entry.side === 'buy' ? ArrowDownLeft : ArrowUpRight, title: `${entry.side === 'buy' ? 'Bought' : 'Sold'} ${entry.name}`, detail: `${entry.auto ? 'Auto-invest · ' : ''}${shortDate(entry.at)}`, amount: `${entry.side === 'buy' ? '−' : '+'}${money(entry.amountCents)}`, amountClass: entry.side === 'sell' ? 'up' : '', secondary: `${entry.shares < 1 ? entry.shares.toPrecision(3) : entry.shares.toFixed(4)} shares` };
+  if (entry.kind === 'pick') { const leg = entry.scenario.legs?.[0]; return { id: entry.id, type: 'sports', icon: Trophy, title: `Picked ${leg?.team ?? 'a team'}`, detail: `${entry.scenario.event} · ${shortDate(entry.at)}`, amount: `−${money(entry.scenario.stakeCents)}`, amountClass: 'down', secondary: 'Waiting for the game' }; }
+  if (entry.kind === 'outcome' && entry.pickId) return { id: entry.id, type: 'sports', icon: Trophy, title: entry.void ? 'Pick refunded' : `Pick ${entry.won ? 'won' : 'lost'}: ${entry.scenario.legs?.[0]?.team ?? ''}`, detail: `${entry.scenario.event} · ${shortDate(entry.at)}`, amount: `+${money(entry.payoutCents)}`, amountClass: entry.payoutCents ? 'up' : undefined, secondary: entry.void ? 'Game canceled' : 'Real result' };
   if (entry.kind === 'outcome') return { id: entry.id, type: 'sports', icon: Trophy, title: `Sports Lab ${entry.won ? 'win' : 'loss'}`, detail: `${entry.scenario.event} · ${shortDate(entry.at)}`, amount: signedMoney(entry.netCents, money), amountClass: entry.netCents >= 0 ? 'up' : 'down', secondary: 'Pretend money' };
   return { id: entry.id, type: 'transfer', icon: PiggyBank, title: 'Moved to savings', detail: shortDate(entry.at), amount: `+${money(entry.amountCents)}`, amountClass: 'up', secondary: 'From Sports Lab' };
 }
