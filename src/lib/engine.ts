@@ -21,14 +21,25 @@ export const scenarioSchema = z.object({ event:z.string().trim().min(1).max(240)
 export type Scenario = z.infer<typeof scenarioSchema>;
 const outcomeSchema = z.object({ kind:z.literal('outcome'), id:z.string(), at:timestamp, scenario:scenarioSchema, won:z.boolean(), payoutCents:cents, netCents:z.number().int(), limits:limitsSchema, availableBefore:cents, dayStartCents:cents, lossBeforeCents:cents });
 const transferSchema = z.object({kind:z.literal('protect'), id:z.string(), at:timestamp, amountCents:cents.min(1), reason:z.string()});
+// Simulated investing: protected savings buy fractional shares at a quoted price.
+// Sells return proceeds to protected savings. Nothing touches the virtual sports budget.
+const symbolSchema = z.string().regex(/^[A-Z][A-Z.\-]{0,9}$/);
+const tradeSchema = z.object({ kind:z.literal('trade'), id:z.string(), at:timestamp, side:z.enum(['buy','sell']), symbol:symbolSchema, name:z.string().min(1).max(80), shares:z.number().positive().max(1e9), price:z.number().positive().max(10_000_000), amountCents:cents.min(1), auto:z.boolean() });
+const mixItemSchema = z.object({ symbol:symbolSchema, name:z.string().min(1).max(80), weight:z.number().int().min(1).max(100) });
+export const autoInvestSchema = z.object({ enabled:z.boolean(), thresholdCents:cents.min(100).max(1_000_000), percent:z.number().int().min(10).max(100), mix:z.array(mixItemSchema).min(1).max(6) })
+  .refine(rule => rule.mix.reduce((n,item)=>n+item.weight,0)===100, 'Auto-invest weights must add up to 100%.')
+  .refine(rule => new Set(rule.mix.map(item=>item.symbol)).size===rule.mix.length, 'Each fund or stock can appear once in the mix.');
+export type AutoInvest = z.infer<typeof autoInvestSchema>;
+export const defaultAutoInvest = (): AutoInvest => ({ enabled:false, thresholdCents:1000, percent:50, mix:[{symbol:'SPY',name:'S&P 500 ETF',weight:70},{symbol:'QQQ',name:'Nasdaq-100 ETF',weight:30}] });
 export type Purchase = z.infer<typeof purchaseSchema>;
 export type Outcome = z.infer<typeof outcomeSchema>;
-export type LedgerEntry = Purchase | Outcome | z.infer<typeof transferSchema>;
+export type Trade = z.infer<typeof tradeSchema>;
+export type LedgerEntry = Purchase | Outcome | Trade | z.infer<typeof transferSchema>;
 const reviewSchema = z.object({id:z.string(),at:timestamp,from:timestamp,summary:z.string(),facts:z.array(z.string()),violations:z.number().int().min(0),blocked:z.number().int().min(0)});
 export type Review = z.infer<typeof reviewSchema>;
-const stateSchema = z.object({version:z.literal(1), ledger:z.array(z.discriminatedUnion('kind',[purchaseSchema,outcomeSchema,transferSchema])).max(10000), limits:limitsSchema, allocation:z.number().int().min(0).max(20), goal:z.object({name:z.string().min(1).max(60),targetCents:cents.min(100)}),dayBudgets:z.array(z.object({day:z.string(),startCents:cents})).max(10000),blocked:z.array(z.object({id:z.string(),at:timestamp,reason:z.string(),stakeCents:cents})).max(10000),reviews:z.array(reviewSchema).max(1000)});
+const stateSchema = z.object({version:z.literal(1), ledger:z.array(z.discriminatedUnion('kind',[purchaseSchema,outcomeSchema,transferSchema,tradeSchema])).max(10000), limits:limitsSchema, autoInvest:autoInvestSchema.default(defaultAutoInvest), allocation:z.number().int().min(0).max(20), goal:z.object({name:z.string().min(1).max(60),targetCents:cents.min(100)}),dayBudgets:z.array(z.object({day:z.string(),startCents:cents})).max(10000),blocked:z.array(z.object({id:z.string(),at:timestamp,reason:z.string(),stakeCents:cents})).max(10000),reviews:z.array(reviewSchema).max(1000)});
 export type Portfolio = z.infer<typeof stateSchema>;
-export const emptyPortfolio = ():Portfolio => ({version:1,ledger:[],limits:{allocation:20,exposure:5,dailyLoss:10},allocation:20,goal:{name:'A little peace of mind',targetCents:5000},dayBudgets:[],blocked:[],reviews:[]});
+export const emptyPortfolio = ():Portfolio => ({version:1,ledger:[],limits:{allocation:20,exposure:5,dailyLoss:10},autoInvest:defaultAutoInvest(),allocation:20,goal:{name:'A little peace of mind',targetCents:5000},dayBudgets:[],blocked:[],reviews:[]});
 
 export function parseAmount(value:string) {
   if (!/^\d{1,5}(\.\d{1,2})?$/.test(value.trim())) throw new Error('Enter a purchase from $0.01 to $10,000 with no more than two decimals.');
@@ -39,13 +50,84 @@ export function parseAmount(value:string) {
 }
 export const roundUp = (amountCents:number) => {if(!Number.isSafeInteger(amountCents)||amountCents<1) throw new Error('Use a positive amount in integer cents.'); return (100 - amountCents % 100) % 100;};
 export function balances(state:Pick<Portfolio,'ledger'>) {
-  let savings=0,risk=0,roundups=0,funding=0,performance=0,spent=0;
+  let savings=0,risk=0,roundups=0,funding=0,performance=0,spent=0,realized=0;
+  const positions=new Map<string,{shares:number;costCents:number}>();
   for (const entry of state.ledger) {
     if(entry.kind==='purchase'){savings+=entry.savingsCents;risk+=entry.riskCents;roundups+=entry.roundupCents;funding+=entry.riskCents;spent+=entry.amountCents;}
     if(entry.kind==='outcome'){risk+=entry.netCents;performance+=entry.netCents;}
     if(entry.kind==='protect'){risk-=entry.amountCents;savings+=entry.amountCents;funding-=entry.amountCents;}
+    if(entry.kind==='trade'){
+      const position=positions.get(entry.symbol)??{shares:0,costCents:0};
+      if(entry.side==='buy'){savings-=entry.amountCents;positions.set(entry.symbol,{shares:position.shares+entry.shares,costCents:position.costCents+entry.amountCents});}
+      else{
+        const closing=entry.shares>=position.shares-1e-9, cost=closing?position.costCents:Math.round(position.costCents*entry.shares/position.shares);
+        savings+=entry.amountCents;realized+=entry.amountCents-cost;
+        if(closing)positions.delete(entry.symbol);else positions.set(entry.symbol,{shares:position.shares-entry.shares,costCents:position.costCents-cost});
+      }
+    }
   }
-  return {savings,risk,roundups,funding,performance,spent,total:savings+risk};
+  const invested=[...positions.values()].reduce((n,p)=>n+p.costCents,0);
+  return {savings,risk,roundups,funding,performance,spent,invested,realized,total:savings+risk+invested};
+}
+
+export type Holding = {symbol:string;name:string;shares:number;costCents:number};
+export function holdings(state:Pick<Portfolio,'ledger'>):Holding[] {
+  const positions=new Map<string,Holding>();
+  for(const entry of state.ledger){
+    if(entry.kind!=='trade')continue;
+    const position=positions.get(entry.symbol)??{symbol:entry.symbol,name:entry.name,shares:0,costCents:0};
+    if(entry.side==='buy'){positions.set(entry.symbol,{...position,shares:position.shares+entry.shares,costCents:position.costCents+entry.amountCents});continue;}
+    if(entry.shares>=position.shares-1e-9){positions.delete(entry.symbol);continue;}
+    const cost=Math.round(position.costCents*entry.shares/position.shares);
+    positions.set(entry.symbol,{...position,shares:position.shares-entry.shares,costCents:position.costCents-cost});
+  }
+  return [...positions.values()].sort((a,b)=>b.costCents-a.costCents);
+}
+export const marketValueCents=(holding:Pick<Holding,'shares'>,price:number)=>Math.round(holding.shares*price*100);
+export function portfolioValue(state:Pick<Portfolio,'ledger'>,prices:Record<string,number|undefined>) {
+  const list=holdings(state);
+  const valueCents=list.reduce((n,h)=>n+(prices[h.symbol]?marketValueCents(h,prices[h.symbol]!):h.costCents),0);
+  const costCents=list.reduce((n,h)=>n+h.costCents,0);
+  return {valueCents,costCents,gainCents:valueCents-costCents,gainPercent:costCents?(valueCents-costCents)/costCents*100:0,priced:list.every(h=>prices[h.symbol]!==undefined)};
+}
+export function buy(state:Portfolio,input:{symbol:string;name:string;price:number;amountCents:number;auto?:boolean;id?:string;at?:string}):Portfolio {
+  if(!Number.isSafeInteger(input.amountCents)||input.amountCents<1) throw new Error('Enter an amount of at least $0.01.');
+  if(!(input.price>0)||!Number.isFinite(input.price)) throw new Error('A live price is required to invest. Try again when prices load.');
+  const cash=balances(state).savings;
+  if(input.amountCents>cash) throw new Error(`Only ${money(cash)} of protected savings is available to invest.`);
+  const entry=tradeSchema.parse({kind:'trade',id:input.id??id(),at:input.at??new Date().toISOString(),side:'buy',symbol:input.symbol,name:input.name,shares:input.amountCents/100/input.price,price:input.price,amountCents:input.amountCents,auto:input.auto??false});
+  return {...state,ledger:[...state.ledger,entry]};
+}
+export function sell(state:Portfolio,input:{symbol:string;price:number;amountCents?:number;all?:boolean;id?:string;at?:string}):Portfolio {
+  const position=holdings(state).find(h=>h.symbol===input.symbol);
+  if(!position) throw new Error('You do not own this investment.');
+  if(!(input.price>0)||!Number.isFinite(input.price)) throw new Error('A live price is required to sell. Try again when prices load.');
+  const value=marketValueCents(position,input.price);
+  const all=input.all||(input.amountCents??0)>=value;
+  const amountCents=all?value:input.amountCents??0;
+  if(!Number.isSafeInteger(amountCents)||amountCents<1) throw new Error('Enter an amount of at least $0.01.');
+  const shares=all?position.shares:amountCents/100/input.price;
+  const entry=tradeSchema.parse({kind:'trade',id:input.id??id(),at:input.at??new Date().toISOString(),side:'sell',symbol:position.symbol,name:position.name,shares,price:input.price,amountCents,auto:false});
+  return {...state,ledger:[...state.ledger,entry]};
+}
+export function updateAutoInvest(state:Portfolio,rule:AutoInvest):Portfolio {
+  const parsed=autoInvestSchema.safeParse(rule);
+  if(!parsed.success) throw new Error(parsed.error.issues[0]?.message??'Invalid auto-invest rule.');
+  return {...state,autoInvest:parsed.data};
+}
+// Sweep rule: once uninvested savings reach the threshold, invest a share of it across the mix.
+export function runAutoInvest(state:Portfolio,prices:Record<string,number|undefined>,at=new Date().toISOString(),force=false):{state:Portfolio;investedCents:number} {
+  const rule=state.autoInvest, cash=balances(state).savings;
+  if((!rule.enabled&&!force)||cash<rule.thresholdCents||rule.mix.some(item=>!prices[item.symbol])) return {state,investedCents:0};
+  const budget=Math.floor(cash*rule.percent/100);
+  let next=state,investedCents=0;
+  for(const item of rule.mix){
+    const amountCents=Math.floor(budget*item.weight/100);
+    if(amountCents<1)continue;
+    next=buy(next,{symbol:item.symbol,name:item.name,price:prices[item.symbol]!,amountCents,auto:true,at});
+    investedCents+=amountCents;
+  }
+  return {state:next,investedCents};
 }
 export function purchaseAllocation(state:Portfolio,amountCents:number) {
   const roundupCents = roundUp(amountCents), b=balances(state);
@@ -169,6 +251,10 @@ export function loadPortfolio(raw:string):Portfolio {
       const b=balances(running);
       if(entry.netCents!==expected-entry.scenario.stakeCents||entry.payoutCents!==expected||entry.availableBefore!==b.risk||entry.scenario.stakeCents>b.risk||entry.scenario.stakeCents>Math.floor(b.risk*entry.limits.exposure/100)||entry.lossBeforeCents+entry.scenario.stakeCents>Math.floor(entry.dayStartCents*entry.limits.dailyLoss/100)||effectiveProbability(entry.scenario)===null) throw new Error('Invalid simulation ledger.');
     }
+    if(entry.kind==='trade'){
+      if(Math.abs(entry.shares*entry.price*100-entry.amountCents)>1) throw new Error('Invalid trade amount.');
+      if(entry.side==='sell'&&entry.shares>(holdings(running).find(h=>h.symbol===entry.symbol)?.shares??0)+1e-9) throw new Error('Invalid trade: more shares sold than owned.');
+    }
     running={...running,ledger:[...running.ledger,entry]};
     const b=balances(running);
     if(b.savings<0||b.risk<0||b.funding<0||b.funding>Math.floor(b.roundups*0.2))throw new Error('Invalid ledger balance.');
@@ -190,8 +276,18 @@ export function demoPortfolio(now=new Date()):Portfolio {
       const r=riskStatus(state,at), stakeCents=Math.min(8,r.maxStake);
       if(stakeCents>0) state=simulate(state,{event:names[Math.floor(index/6)%3],probability:0.6,multiplier:1.85,stakeCents,combined:false,secondProbability:0.5,independent:false},()=>Math.floor(index/6)%3===0?0.8:0.2,new Date(new Date(at).getTime()+1000).toISOString()).state;
     }
+    // Illustrative demo trades at fixed example prices; live quotes value them today.
+    const tradeAt=new Date(new Date(at).getTime()+2000).toISOString();
+    if(index===30){
+      state=buy(state,{id:'demo-trade-spy',symbol:'SPY',name:'S&P 500 ETF',price:712.4,amountCents:800,auto:true,at:tradeAt});
+      state=buy(state,{id:'demo-trade-qqq',symbol:'QQQ',name:'Nasdaq-100 ETF',price:641.15,amountCents:400,auto:true,at:tradeAt});
+    }
+    if(index===44){
+      state=buy(state,{id:'demo-trade-nvda',symbol:'NVDA',name:'NVIDIA',price:151.3,amountCents:300,at:tradeAt});
+      state=buy(state,{id:'demo-trade-aapl',symbol:'AAPL',name:'Apple',price:338.9,amountCents:200,at:tradeAt});
+    }
   }
-  state={...state,ledger:[...state.ledger].sort((a,b)=>a.at.localeCompare(b.at))};
+  state={...state,autoInvest:{...defaultAutoInvest(),enabled:true},ledger:[...state.ledger].sort((a,b)=>a.at.localeCompare(b.at))};
   return saveReview(state,now.toISOString());
 }
 
@@ -201,7 +297,7 @@ export function activityData(state:Portfolio,days:number,now=new Date()) {
   return Array.from({length:count},(_,i)=>{
     const time=start+(now.getTime()-start)*i/(count-1),date=new Date(time);
     const b=balances({ledger:state.ledger.filter(e=>new Date(e.at).getTime()<=time)});
-    return {label:date.toLocaleDateString('en-US',{month:'short',day:'numeric'}),roundups:b.roundups/100,savings:b.savings/100,risk:b.risk/100,performance:b.performance/100};
+    return {label:date.toLocaleDateString('en-US',{month:'short',day:'numeric'}),roundups:b.roundups/100,savings:b.savings/100,invested:b.invested/100,risk:b.risk/100,performance:b.performance/100};
   });
 }
 export function projection(state:Portfolio,months=6) {

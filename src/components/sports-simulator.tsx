@@ -107,7 +107,7 @@ export function SportsSimulator({ state, mutate, notify, onReview, onScenarioCha
       const response = await fetch('/api/advisor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
         body: JSON.stringify({ question: 'Explain my selected teams, assumed probabilities, illustrative multipliers, expected value, maximum loss, and virtual budget impact. Distinguish real schedule data from assumptions.', portfolio: state, scenario }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error);
-      setExplanation(`${data.mode === 'demo' ? 'Demo explanation' : 'RoundUp Intelligence · Claude'}\n\n${data.answer}${data.notice ? `\n\n${data.notice}` : ''}`);
+      setExplanation(`${data.mode === 'demo' ? 'Demo explanation' : 'Wolf Intelligence · Claude'}\n\n${data.answer}${data.notice ? `\n\n${data.notice}` : ''}`);
     } catch (cause) { if (!controller.signal.aborted) setExplanation(`Explanation unavailable: ${(cause as Error).message}`); }
     finally { if (!controller.signal.aborted) setAsking(false); }
   }

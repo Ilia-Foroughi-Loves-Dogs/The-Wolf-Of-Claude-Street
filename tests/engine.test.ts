@@ -15,7 +15,7 @@ test('purchase amounts use cents and reject ambiguous, invalid, and excessive in
 });
 test('the judge demo coffee allocates exactly 52 cents protected and 13 cents virtual',()=>{
   const state=purchase(emptyPortfolio());
-  assert.deepEqual(balances(state),{savings:52,risk:13,roundups:65,funding:13,performance:0,spent:435,total:65});
+  assert.deepEqual(balances(state),{savings:52,risk:13,roundups:65,funding:13,performance:0,spent:435,invested:0,realized:0,total:65});
   assert.equal(state.ledger.length,1);assert.equal(emptyPortfolio().ledger.length,0);
 });
 test('allocation always conserves integer cents and never exceeds the funding cap',()=>{
